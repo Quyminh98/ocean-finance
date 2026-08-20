@@ -36,11 +36,11 @@ function CopyableCode({ code, className }: { code: string; className?: string })
 }
 
 export function McpConnectionGuide({ endpoint }: { endpoint: string }) {
-  const cliCommand = `claude mcp add --transport http finance-dashboard ${endpoint} \\\n  --header "Authorization: Bearer <API_KEY_CỦA_BẠN>"`;
+  const cliCommand = `claude mcp add --transport http ocean-finance ${endpoint} \\\n  --header "Authorization: Bearer <API_KEY_CỦA_BẠN>"`;
 
   const mcpJson = `{
   "mcpServers": {
-    "finance-dashboard": {
+    "ocean-finance": {
       "type": "http",
       "url": "${endpoint}",
       "headers": {
