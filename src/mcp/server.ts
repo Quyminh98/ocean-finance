@@ -121,7 +121,7 @@ const DESTRUCTIVE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, id
  * always `actor_type=MCP` — see `auditActorFields` in `server/audit/log-action.ts`.
  */
 export function buildMcpServer(mcpClientId: string, createdByAdminId: string): McpServer {
-  const server = new McpServer({ name: "finance-dashboard", version: "1.0.0" });
+  const server = new McpServer({ name: "ocean-finance", version: "1.0.0" });
   const auditMeta = { actorMcpClientId: mcpClientId };
 
   server.registerTool(
