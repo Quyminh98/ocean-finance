@@ -1,0 +1,467 @@
+// Prisma schema — Finance & Revenue Dashboard
+// Source of truth: context/schema.md. Do not add/rename/retype fields without
+// updating that file first (see CLAUDE.md "Database").
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// SYSTEM = no purchase price, self-service (User can create + auto-assign to
+/// self). BKT = paid purchase, Admin-only create flow (see schema.md Changelog
+/// 2026-08-18 "thêm page_type").
+enum PageType {
+  SYSTEM
+  BKT
+}
+
+/// Preset swatches for Page.statusColor — kept to tokens already defined in
+/// globals.css/DESIGN.md (no free-form hex) so free-text status tags stay
+/// visually consistent with the rest of the "Precision Ledger" system.
+enum PageStatusColor {
+  GRAY
+  GREEN
+  BLUE
+  AMBER
+  RED
+  ORANGE
+  PURPLE
+  PINK
+}
+
+enum AuditActorType {
+  USER
+  MCP
+}
+
+enum McpClientStatus {
+  ACTIVE
+  REVOKED
+}
+
+// ---------------------------------------------------------------------------
+// Auth / People
+// ---------------------------------------------------------------------------
+
+/// Login account. Deactivation uses `status`, never deleted (keeps history intact).
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  employeeProfile EmployeeProfile?
+
+  createdPages                Page[]                     @relation("PageCreatedByAdmin")
+  paidPages                   Page[]                     @relation("PagePaidByAdmin")
+  assignedPageAssignments     PageAssignment[]           @relation("AssignmentCreatedByAdmin")
+  createdSalaryHistories      SalaryHistory[]            @relation("SalaryHistoryCreatedByAdmin")
+  paidSalaryHistories         SalaryHistory[]            @relation("SalaryHistoryPaidByAdmin")
+  createdRevenues             Revenue[]                  @relation("RevenueCreatedByAdmin")
+  createdAdExpenses           AdExpense[]                @relation("AdExpenseCreatedByAdmin")
+  paidAdExpenses              AdExpense[]                @relation("AdExpensePaidByAdmin")
+  createdPagePurchaseExpenses PagePurchaseExpense[]      @relation("PagePurchaseExpenseCreatedByAdmin")
+  paidPagePurchaseExpenses    PagePurchaseExpense[]      @relation("PagePurchaseExpensePaidByAdmin")
+  createdAdminExpenses        AdminExpense[]             @relation("AdminExpenseCreatedByAdmin")
+  paidAdminExpenses           AdminExpense[]             @relation("AdminExpensePaidByAdmin")
+  createdAdminReceipts        AdminReceipt[]             @relation("AdminReceiptCreatedByAdmin")
+  receivedAdminReceipts       AdminReceipt[]             @relation("AdminReceiptReceivedByAdmin")
+  createdEmployeeReceipts     EmployeeReceipt[]          @relation("EmployeeReceiptCreatedByAdmin")
+  createdProfitSettlements    EmployeeProfitSettlement[] @relation("EmployeeProfitSettlementCreatedByAdmin")
+  createdMcpClients           McpClient[]                @relation("McpClientCreatedByAdmin")
+  auditLogs                   AuditLog[]                 @relation("AuditLogActorUser")
+
+  @@map("users")
+}
+
+/// 1-1 with User (role = USER). Kept separate from User to allow future
+/// employee-only fields without touching the auth table.
+model EmployeeProfile {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  salaryHistories              SalaryHistory[]
+  pageAssignments              PageAssignment[]
+  revenueSnapshots             Revenue[]
+  adExpenseSnapshots           AdExpense[]
+  pagePurchaseExpenseSnapshots PagePurchaseExpense[]
+  employeeReceipts             EmployeeReceipt[]
+  profitSettlements            EmployeeProfitSettlement[]
+
+  @@map("employee_profiles")
+}
+
+/// Salary over time. At most one row per employee has `effectiveTo = null`
+/// (the currently active salary) — enforced by the partial unique index below.
+model SalaryHistory {
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  monthlySalary    BigInt    @map("monthly_salary")
+  effectiveFrom    DateTime  @map("effective_from") @db.Date
+  effectiveTo      DateTime? @map("effective_to") @db.Date
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  paidByAdminId    String    @map("paid_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  employee       EmployeeProfile @relation(fields: [employeeId], references: [id])
+  createdByAdmin User            @relation("SalaryHistoryCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin    User            @relation("SalaryHistoryPaidByAdmin", fields: [paidByAdminId], references: [id])
+
+  // Tối đa một record active (effective_to IS NULL) / employee.
+  @@unique([employeeId], map: "salary_history_one_active_per_employee", where: raw("effective_to IS NULL"))
+  @@map("salary_history")
+}
+
+// ---------------------------------------------------------------------------
+// Pages
+// ---------------------------------------------------------------------------
+
+/// Central unit. Current owner is NEVER stored here — always resolve via
+/// PageAssignment (see resolvePageOwner in spec §36 / CLAUDE.md).
+model Page {
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  facebookUrl      String    @map("facebook_url")
+  /// SYSTEM = no purchase price, User can self-create + self-assign one.
+  /// BKT = existing paid-purchase flow, Admin-only (see schema.md Changelog 2026-08-18).
+  pageType         PageType  @default(BKT) @map("page_type")
+  purchasePrice    BigInt    @default(0) @map("purchase_price")
+  purchaseMonth    DateTime  @map("purchase_month") @db.Date
+  /// Designated payer for the eventual PagePurchaseExpense — captured at Page
+  /// creation whenever purchasePrice > 0, even if no employee is assigned yet
+  /// (assignEmployee reuses this instead of asking again). Null when purchasePrice = 0.
+  paidByAdminId    String?   @map("paid_by_admin_id") @db.Uuid
+  notes            String?
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  createdByAdmin User  @relation("PageCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin    User? @relation("PagePaidByAdmin", fields: [paidByAdminId], references: [id])
+
+  assignments       PageAssignment[]
+  revenues          Revenue[]
+  adExpenses        AdExpense[]
+  purchaseExpense   PagePurchaseExpense?
+  /// Many-to-many with PageStatusOption (user request 2026-08-18 — "chọn
+  /// nhiều trạng thái được", replaces the single nullable `status_id` FK).
+  statusAssignments PageStatusAssignment[]
+
+  @@map("pages")
+}
+
+/// Join table for Page <-> PageStatusOption (user request 2026-08-18 — a
+/// Page can carry multiple status tags at once). Explicit table (not
+/// Prisma's implicit M2M) to keep a real UUID PK + created_at, consistent
+/// with every other table in this schema (see Conventions).
+model PageStatusAssignment {
+  id             String   @id @default(uuid()) @db.Uuid
+  pageId         String   @map("page_id") @db.Uuid
+  statusOptionId String   @map("status_option_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  page         Page             @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  statusOption PageStatusOption @relation(fields: [statusOptionId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, statusOptionId], map: "page_status_assignments_unique")
+  @@map("page_status_assignments")
+}
+
+/// Managed picklist backing PageStatusAssignment (user request 2026-08-18,
+/// replaces free-text status + per-Page color). Admin-managed via Cài đặt →
+/// "Loại trạng thái Page" — small fixed-size list (2 seeded + whatever Admin adds),
+/// no pagination (CLAUDE.md "ưu tiên đơn giản"). Unlike Page/Revenue/AdExpense
+/// (financial data — soft delete only), this is pure display metadata, so
+/// deletion here is a real hard delete (confirmed via AskUserQuestion) — the
+/// first entity in the app with one. Pages referencing a deleted option lose
+/// just that one assignment (`ON DELETE CASCADE` on PageStatusAssignment),
+/// keeping any other statuses they have.
+model PageStatusOption {
+  id        String          @id @default(uuid()) @db.Uuid
+  label     String
+  color     PageStatusColor
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  assignments PageStatusAssignment[]
+
+  @@map("page_status_options")
+}
+
+/// Source of truth for "which employee owns this Page, and when".
+/// At most one active (endedAt IS NULL) assignment per page.
+model PageAssignment {
+  id                String    @id @default(uuid()) @db.Uuid
+  pageId            String    @map("page_id") @db.Uuid
+  employeeId        String    @map("employee_id") @db.Uuid
+  startedAt         DateTime  @map("started_at") @db.Date
+  endedAt           DateTime? @map("ended_at") @db.Date
+  assignedByAdminId String    @map("assigned_by_admin_id") @db.Uuid
+  note              String?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  page            Page            @relation(fields: [pageId], references: [id])
+  employee        EmployeeProfile @relation(fields: [employeeId], references: [id])
+  assignedByAdmin User            @relation("AssignmentCreatedByAdmin", fields: [assignedByAdminId], references: [id])
+
+  revenues        Revenue[]
+  adExpenses      AdExpense[]
+  purchaseExpense PagePurchaseExpense?
+
+  @@unique([pageId], map: "page_assignment_one_active_per_page", where: raw("ended_at IS NULL"))
+  @@map("page_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Finance — Page-scoped (snapshot pattern)
+// ---------------------------------------------------------------------------
+
+/// Revenue for a Page. employeeIdSnapshot/assignmentIdSnapshot are resolved
+/// once at creation time via resolvePageOwner() and never re-synced.
+/// Tracked per calendar month (user request 2026-08-18, same rule as
+/// AdExpense/Phase 6): `revenueMonth` is always normalized to the 1st of the
+/// month, and `revenues_page_month_unique` below enforces at most one active
+/// record per Page per month — creating a 2nd one for the same Page+month
+/// overwrites it instead of adding a row.
+model Revenue {
+  id                   String    @id @default(uuid()) @db.Uuid
+  pageId               String    @map("page_id") @db.Uuid
+  employeeIdSnapshot   String    @map("employee_id_snapshot") @db.Uuid
+  assignmentIdSnapshot String    @map("assignment_id_snapshot") @db.Uuid
+  revenueMonth         DateTime  @map("revenue_month") @db.Date
+  amount               BigInt
+  note                 String?
+  createdByAdminId     String    @map("created_by_admin_id") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz
+
+  page               Page            @relation(fields: [pageId], references: [id])
+  employeeSnapshot   EmployeeProfile @relation(fields: [employeeIdSnapshot], references: [id])
+  assignmentSnapshot PageAssignment  @relation(fields: [assignmentIdSnapshot], references: [id])
+  createdByAdmin     User            @relation("RevenueCreatedByAdmin", fields: [createdByAdminId], references: [id])
+
+  @@unique([pageId, revenueMonth], map: "revenues_page_month_unique", where: raw("deleted_at IS NULL"))
+  @@map("revenues")
+}
+
+/// Ads expense for a Page — same snapshot pattern as Revenue, but tracked
+/// per calendar month (not per day): `expenseMonth` is always normalized to
+/// the 1st of the month, and `ad_expenses_page_month_unique` below (partial
+/// unique index via the `partialIndexes` preview feature, same pattern as
+/// SalaryHistory/PageAssignment) enforces at most one active record per
+/// Page per month. Owner resolves against the 1st of the month, so a
+/// mid-month transfer does not split a single month's Ads cost.
+model AdExpense {
+  id                   String    @id @default(uuid()) @db.Uuid
+  pageId               String    @map("page_id") @db.Uuid
+  employeeIdSnapshot   String    @map("employee_id_snapshot") @db.Uuid
+  assignmentIdSnapshot String    @map("assignment_id_snapshot") @db.Uuid
+  expenseMonth         DateTime  @map("expense_month") @db.Date
+  amount               BigInt
+  note                 String?
+  createdByAdminId     String    @map("created_by_admin_id") @db.Uuid
+  paidByAdminId        String    @map("paid_by_admin_id") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz
+
+  page               Page            @relation(fields: [pageId], references: [id])
+  employeeSnapshot   EmployeeProfile @relation(fields: [employeeIdSnapshot], references: [id])
+  assignmentSnapshot PageAssignment  @relation(fields: [assignmentIdSnapshot], references: [id])
+  createdByAdmin     User            @relation("AdExpenseCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin        User            @relation("AdExpensePaidByAdmin", fields: [paidByAdminId], references: [id])
+
+  @@unique([pageId, expenseMonth], map: "ad_expenses_page_month_unique", where: raw("deleted_at IS NULL"))
+  @@map("ad_expenses")
+}
+
+/// Created exactly once when a Page is created with purchasePrice > 0.
+/// Permanently snapshotted to the first employee — never moves on transfer.
+model PagePurchaseExpense {
+  id                   String    @id @default(uuid()) @db.Uuid
+  pageId               String    @unique @map("page_id") @db.Uuid
+  employeeIdSnapshot   String    @map("employee_id_snapshot") @db.Uuid
+  assignmentIdSnapshot String    @unique @map("assignment_id_snapshot") @db.Uuid
+  purchaseMonth        DateTime  @map("purchase_month") @db.Date
+  amount               BigInt
+  createdByAdminId     String    @map("created_by_admin_id") @db.Uuid
+  paidByAdminId        String    @map("paid_by_admin_id") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz
+
+  page               Page            @relation(fields: [pageId], references: [id])
+  employeeSnapshot   EmployeeProfile @relation(fields: [employeeIdSnapshot], references: [id])
+  assignmentSnapshot PageAssignment  @relation(fields: [assignmentIdSnapshot], references: [id])
+  createdByAdmin     User            @relation("PagePurchaseExpenseCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin        User            @relation("PagePurchaseExpensePaidByAdmin", fields: [paidByAdminId], references: [id])
+
+  @@map("page_purchase_expenses")
+}
+
+// ---------------------------------------------------------------------------
+// Finance — Admin-scoped
+// ---------------------------------------------------------------------------
+
+/// Not gắn Page/employee — chỉ cộng vào Total Expenses hệ thống.
+model AdminExpense {
+  id               String    @id @default(uuid()) @db.Uuid
+  expenseDate      DateTime  @map("expense_date") @db.Date
+  amount           BigInt
+  description      String
+  note             String?
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  paidByAdminId    String    @map("paid_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  createdByAdmin User @relation("AdminExpenseCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin    User @relation("AdminExpensePaidByAdmin", fields: [paidByAdminId], references: [id])
+
+  @@map("admin_expenses")
+}
+
+/// Tiền Admin THỰC NHẬN — tách biệt hoàn toàn với Page Revenue (spec §9).
+model AdminReceipt {
+  id                String    @id @default(uuid()) @db.Uuid
+  receiptMonth      DateTime  @map("receipt_month") @db.Date
+  amount            BigInt
+  source            String
+  note              String?
+  createdByAdminId  String    @map("created_by_admin_id") @db.Uuid
+  /// Admin who actually RECEIVED the money — distinct from createdByAdminId
+  /// (who logged the record), same distinction as paidByAdminId on the
+  /// expense tables (user request 2026-08-18, spec §9/§44).
+  receivedByAdminId String    @map("received_by_admin_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz
+
+  createdByAdmin  User @relation("AdminReceiptCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  receivedByAdmin User @relation("AdminReceiptReceivedByAdmin", fields: [receivedByAdminId], references: [id])
+
+  @@map("admin_receipts")
+}
+
+/// Tiền nhân viên THỰC NHẬN — thuần bản ghi để xem (user request 2026-08-18),
+/// KHÔNG cộng vào Employee Cost/Revenue hay bất kỳ công thức tài chính nào
+/// khác. Một employee tối đa một record đang hoạt động/tháng, cùng cơ chế
+/// upsert-overwrite như Revenue/AdExpense (nhập lại cho cùng nhân viên+tháng
+/// sẽ ghi đè, không cộng dồn thành nhiều dòng).
+model EmployeeReceipt {
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  receiptMonth     DateTime  @map("receipt_month") @db.Date
+  amount           BigInt
+  note             String?
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  employee       EmployeeProfile @relation(fields: [employeeId], references: [id])
+  createdByAdmin User            @relation("EmployeeReceiptCreatedByAdmin", fields: [createdByAdminId], references: [id])
+
+  @@unique([employeeId, receiptMonth], map: "employee_receipts_employee_month_unique", where: raw("deleted_at IS NULL"))
+  @@map("employee_receipts")
+}
+
+/// "Chốt lợi nhuận nhân viên" (user request 2026-08-19) — Admin manually
+/// settles an employee's running profit (Revenue − Cost − Σ past
+/// settlements, all-time) back to 0 by recording that amount here as if it
+/// were an expense paid to the employee. Purely an internal running-balance
+/// adjustment for this one screen — does NOT feed into Employee Cost (spec
+/// §10.2), Total Expenses, or System Profit (§10.3/10.5), same isolation
+/// rule as EmployeeReceipt above. Amount is always system-computed at
+/// settlement time, never typed by hand — no `updated_at`/edit path, only
+/// create + soft delete (undo a mistaken settlement).
+model EmployeeProfitSettlement {
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  amount           BigInt
+  note             String?
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  employee       EmployeeProfile @relation(fields: [employeeId], references: [id])
+  createdByAdmin User            @relation("EmployeeProfitSettlementCreatedByAdmin", fields: [createdByAdminId], references: [id])
+
+  @@map("employee_profit_settlements")
+}
+
+// ---------------------------------------------------------------------------
+// Audit / MCP
+// ---------------------------------------------------------------------------
+
+/// Append-only. No update/delete path from the application layer.
+model AuditLog {
+  id          String         @id @default(uuid()) @db.Uuid
+  actorType   AuditActorType @map("actor_type")
+  actorUserId String?        @map("actor_user_id") @db.Uuid
+  mcpClientId String?        @map("mcp_client_id") @db.Uuid
+  action      String
+  entityType  String         @map("entity_type")
+  entityId    String         @map("entity_id") @db.Uuid
+  beforeJson  Json?          @map("before_json")
+  afterJson   Json?          @map("after_json")
+  ipAddress   String?        @map("ip_address")
+  userAgent   String?        @map("user_agent")
+  requestId   String         @map("request_id")
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  actorUser User?      @relation("AuditLogActorUser", fields: [actorUserId], references: [id])
+  mcpClient McpClient? @relation(fields: [mcpClientId], references: [id])
+
+  @@map("audit_logs")
+}
+
+/// API key issued to an AI agent (Claude Code). V1: single ADMIN_FULL scope.
+/// Only the hash is ever persisted — plaintext is shown once at creation time.
+model McpClient {
+  id               String          @id @default(uuid()) @db.Uuid
+  name             String
+  apiKeyHash       String          @map("api_key_hash")
+  status           McpClientStatus @default(ACTIVE)
+  permissionsJson  Json            @map("permissions_json")
+  createdByAdminId String          @map("created_by_admin_id") @db.Uuid
+  lastUsedAt       DateTime?       @map("last_used_at") @db.Timestamptz
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  revokedAt        DateTime?       @map("revoked_at") @db.Timestamptz
+
+  createdByAdmin User       @relation("McpClientCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  auditLogs      AuditLog[]
+
+  @@map("mcp_clients")
+}

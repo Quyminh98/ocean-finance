@@ -1,0 +1,190 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Precision Ledger design tokens — mapped 1:1 from .stitch/DESIGN.md.
+ * Do not add colors/spacing/typography values outside that file.
+ */
+@theme {
+  /* Raw palette (Precision Ledger) */
+  --color-surface: #fef9ee;
+  --color-surface-dim: #dedacf;
+  --color-surface-bright: #fef9ee;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f8f3e8;
+  --color-surface-container: #f2ede3;
+  --color-surface-container-high: #ece8dd;
+  --color-surface-container-highest: #e7e2d7;
+  --color-surface-variant: #e7e2d7;
+  --color-on-surface: #1d1c15;
+  --color-on-surface-variant: #48464b;
+  --color-inverse-surface: #323029;
+  --color-inverse-on-surface: #f5f0e5;
+  --color-outline: #79767c;
+  --color-outline-variant: #cac5cc;
+  --color-surface-tint: #615c6a;
+
+  --color-primary: #000000;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #1d1a25;
+  --color-on-primary-container: #878190;
+  --color-inverse-primary: #cbc4d3;
+  --color-primary-fixed: #e7e0f0;
+  --color-primary-fixed-dim: #cbc4d3;
+  --color-on-primary-fixed: #1d1a25;
+  --color-on-primary-fixed-variant: #494552;
+
+  --color-secondary: #715b34;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #fcdfad;
+  --color-on-secondary-container: #77613a;
+  --color-secondary-fixed: #fcdfad;
+  --color-secondary-fixed-dim: #dfc393;
+  --color-on-secondary-fixed: #271900;
+  --color-on-secondary-fixed-variant: #57441f;
+
+  --color-tertiary: #000000;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #201b0c;
+  --color-on-tertiary-container: #8c836e;
+  --color-tertiary-fixed: #ede1c9;
+  --color-tertiary-fixed-dim: #d0c5ae;
+  --color-on-tertiary-fixed: #201b0c;
+  --color-on-tertiary-fixed-variant: #4d4634;
+
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+
+  --color-background: #fef9ee;
+  --color-on-background: #1d1c15;
+  --color-foreground: var(--color-on-background);
+
+  /* Semantic accents */
+  --color-finance-blue: #0061ff;
+  --color-success-green: #027a48;
+  --color-error-red: #d92d20;
+  --color-surface-ice: #e6f2f5;
+  --color-border-subtle: #e5e7eb;
+  /* Page status tag accents (user request 2026-08-18) — same mid-saturation
+     weight as finance-blue/success-green/error-red above, for Page.statusColor presets. */
+  --color-warning-orange: #c2410c;
+  --color-violet-tag: #7c3aed;
+  --color-rose-tag: #be185d;
+  /* Bug fix 2026-08-18: "Vàng" (AMBER) previously reused on-secondary-container
+     (#77613a, a dark brown), which doesn't read as yellow — see globals.css/DESIGN.md
+     note above for why the other 3 presets got dedicated tokens. Nudged warmer/more
+     yellow same day (#A16207 -> #CA8A04, user feedback "vàng hơn") — still dark
+     enough for text contrast, same constraint as finance-blue/success-green/error-red. */
+  --color-amber-tag: #ca8a04;
+  /* Deep near-black anchor — Primary Buttons per DESIGN.md "Components" */
+  --color-ink: #17141f;
+
+  /* shadcn/ui component wiring — reuses the palette above, no new colors */
+  --color-card: var(--color-surface-container-lowest);
+  --color-card-foreground: var(--color-on-surface);
+  --color-popover: var(--color-surface-container-lowest);
+  --color-popover-foreground: var(--color-on-surface);
+  --color-primary-foreground: var(--color-on-primary);
+  --color-secondary-foreground: var(--color-on-secondary);
+  --color-muted: var(--color-surface-container-low);
+  --color-muted-foreground: var(--color-on-surface-variant);
+  --color-accent: var(--color-surface-ice);
+  --color-accent-foreground: var(--color-on-surface);
+  --color-destructive: var(--color-error-red);
+  --color-border: var(--color-border-subtle);
+  --color-input: var(--color-border-subtle);
+  --color-ring: var(--color-finance-blue);
+  --color-chart-1: var(--color-finance-blue);
+  --color-chart-2: var(--color-success-green);
+  --color-chart-3: var(--color-error-red);
+  --color-chart-4: var(--color-secondary);
+  --color-chart-5: var(--color-tertiary-fixed-dim);
+
+  --color-sidebar: var(--color-surface);
+  --color-sidebar-foreground: var(--color-on-surface);
+  --color-sidebar-primary: var(--color-finance-blue);
+  --color-sidebar-primary-foreground: var(--color-on-primary);
+  --color-sidebar-accent: var(--color-surface-container);
+  --color-sidebar-accent-foreground: var(--color-on-surface);
+  --color-sidebar-border: var(--color-border-subtle);
+  --color-sidebar-ring: var(--color-finance-blue);
+
+  /* Typography — tiered font strategy (Headline / Body / Data) */
+  --font-headline-lg: var(--font-space-grotesk), sans-serif;
+  --font-headline-md: var(--font-space-grotesk), sans-serif;
+  --font-headline-sm: var(--font-space-grotesk), sans-serif;
+  --font-body-lg: var(--font-inter), sans-serif;
+  --font-body-md: var(--font-inter), sans-serif;
+  --font-label-caps: var(--font-inter), sans-serif;
+  --font-data-tabular: var(--font-jetbrains-mono), monospace;
+  --font-sans: var(--font-inter), sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+
+  --text-headline-lg: 32px;
+  --text-headline-lg--line-height: 1.2;
+  --text-headline-lg--letter-spacing: -0.02em;
+  --text-headline-lg--font-weight: 600;
+  --text-headline-md: 24px;
+  --text-headline-md--line-height: 1.3;
+  --text-headline-md--font-weight: 600;
+  --text-headline-sm: 18px;
+  --text-headline-sm--line-height: 1.4;
+  --text-headline-sm--font-weight: 500;
+  --text-body-lg: 16px;
+  --text-body-lg--line-height: 1.6;
+  --text-body-lg--font-weight: 400;
+  --text-body-md: 14px;
+  --text-body-md--line-height: 1.5;
+  --text-body-md--font-weight: 400;
+  --text-label-caps: 12px;
+  --text-label-caps--line-height: 1;
+  --text-label-caps--letter-spacing: 0.05em;
+  --text-label-caps--font-weight: 600;
+  --text-data-tabular: 14px;
+  --text-data-tabular--line-height: 1;
+  --text-data-tabular--letter-spacing: -0.01em;
+  --text-data-tabular--font-weight: 500;
+
+  /* Spacing rhythm (8px grid) */
+  --spacing-base: 4px;
+  --spacing-container-margin: 32px;
+  --spacing-gutter: 24px;
+  --spacing-card-padding: 20px;
+  --spacing-stack-sm: 8px;
+  --spacing-stack-md: 16px;
+
+  /* Shape — "Soft Professional" small-radius corners */
+  --radius-sm: 0.125rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+  --radius: 0.25rem;
+}
+
+@layer base {
+  * {
+    @apply border-border-subtle outline-ring/50;
+  }
+  body {
+    @apply bg-surface text-on-surface font-body-md text-body-md antialiased;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* Tailwind v4 Preflight defaults buttons to `cursor: default` (matching
+     native browser behavior) instead of v3's `cursor: pointer` — restore the
+     pointer cursor on hover for every button-like element (user request
+     2026-08-19), per Tailwind's own documented upgrade-guide fix. Covers
+     both native <button> and Base UI's `role="button"` (polymorphic
+     Button/Link triggers rendered via `nativeButton={false}`). */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
