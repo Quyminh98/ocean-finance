@@ -18,7 +18,7 @@ export function SidebarNavItem({ href, label, icon }: NavLinkProps) {
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-3 rounded-r border-l-2 px-4 py-2 font-label-caps text-label-caps transition-colors",
+        "flex items-center gap-3 rounded-r border-l-2 px-4 py-2 font-body-md text-body-md transition-colors",
         isActive
           ? "border-finance-blue bg-sidebar-accent text-on-surface font-semibold"
           : "border-transparent text-on-surface-variant hover:border-outline-variant hover:text-on-surface",

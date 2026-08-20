@@ -27,6 +27,7 @@ Quy tắc chia giai đoạn: mỗi phase chỉ làm **một** nhóm tính năng,
 - [x] Phase 16.1: Audit Log cap 5.000 dòng, Dashboard/Sidebar UX cho cả Admin & User, đồng bộ công thức Lợi nhuận (session 2026-08-19)
 - [x] Phase 17: Polish (responsive, animation, edge cases)
 - [x] Phase 17.1: Rebrand, nhạc nền, Hồ sơ Admin, Lợi nhuận nhân viên, month filter Dashboard (session 2026-08-19 tiếp theo)
+- [x] Phase 17.2: Bảo mật + Deploy prep + Đồng bộ MCP tool (session 2026-08-20)
 
 > Cập nhật `[ ]` → `[x]` ngay trong mục checklist trên **và** trong tiêu đề phase tương ứng bên dưới khi phase đó hoàn thành và đã qua điểm dừng.
 
@@ -1064,6 +1065,23 @@ Không phải phase theo kế hoạch gốc — chuỗi yêu cầu ad-hoc của 
 - ⚠️ Phát hiện phụ: `sslmode=require` trong `DATABASE_URL` gây warning `pg` (hành vi ngầm định sẽ đổi ở major version sau) — sửa `sslmode=verify-full` để khai báo tường minh đúng mức bảo mật đang có, không phụ thuộc default có thể đổi.
 
 **Điểm dừng:** ✅ **User đã tự kiểm thử và xác nhận hoàn thành giai đoạn này.** Chuỗi yêu cầu ad-hoc đã xử lý xong, mỗi mục đều verify riêng qua browser thật + test tự động; `package.json` đã sẵn sàng deploy Vercel (`postinstall: prisma generate`). Không có điểm dừng chính thức (không phải phase kế hoạch gốc) — tiếp tục nhận yêu cầu tiếp theo từ user.
+
+---
+
+## Phase 17.2: Bảo mật + Deploy prep + Đồng bộ MCP tool (session 2026-08-20)
+
+Không phải phase kế hoạch gốc — tiếp tục chuỗi ad-hoc, cùng tiền lệ Phase 13.1/13.2/16.1/17.1.
+
+- **Rà bảo mật toàn app theo yêu cầu user:** phát hiện `.env` chứa credential thật (DB Neon, `AUTH_SECRET`, mật khẩu 2 Admin) ở dạng plaintext cục bộ — đã cảnh báo, user tự quyết định giữ nguyên (không rotate). Sửa 2 điểm code: (1) `mcp/tool-runner.ts` — lỗi Prisma/lỗi hệ thống không xác định không còn trả `error.message` gốc (rò rỉ chi tiết SQL/cột/constraint) ra ngoài MCP response, chỉ lỗi nghiệp vụ có `.code` tường minh (`XxxError` pattern) mới giữ nguyên message; (2) `next.config.ts` — thêm `headers()` với 5 security header cơ bản (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`) cho mọi route, chưa thêm CSP (cần wiring nonce riêng, không muốn vá ẩu).
+- **Chuẩn bị deploy Vercel (lần 2, user request "hướng dẫn tôi deploy"):** thêm script `vercel-build: "prisma migrate deploy && next build"` vào `package.json` — Vercel tự nhận diện script tên `vercel-build` và ưu tiên dùng thay `build` mặc định, không cần chỉnh Build Command thủ công trong dashboard. **Lưu ý: khác quyết định đã ghi ở Phase 17.1 phía trên** ("khuyến nghị **không** đưa `prisma migrate deploy` vào build command tự động, tránh migrate nhầm mỗi lần push") — lần này chọn ngược lại vì `prisma migrate deploy` chỉ áp các migration *chưa* chạy (idempotent, an toàn tự động hoá theo đúng khuyến nghị chính thức Prisma+Vercel), và giữ tách biệt `build` (local, nhanh) khỏi `vercel-build` (có migrate) nên không ảnh hưởng dev local. Repo chưa có git (`git init` chưa chạy) — đã hướng dẫn đầy đủ: khởi tạo git → tạo repo GitHub → import vào Vercel → khai `DATABASE_URL`/`AUTH_SECRET` (dùng lại giá trị `.env` hiện có, cùng 1 DB Neon cho cả dev/production theo quyết định của user) → deploy. Không cần seed lại vì dùng chung DB đã có sẵn 2 Admin.
+- **Sửa thêm `.gitignore`:** thiếu `.claude/` (state runtime của Claude Code, chỉ có `scheduled_tasks.lock` tại thời điểm rà soát) — đã thêm, tránh commit nhầm khi `git init`.
+- **Cỡ chữ Sidebar nav item quá nhỏ (user phản hồi):** đổi token từ `label-caps` (12px, đúng ra dành cho caption/table header, không phải nav item) sang `body-md` (14px) — đúng token đã định nghĩa sẵn trong `.stitch/DESIGN.md`, áp dụng cho cả Admin lẫn User Sidebar (dùng chung `SidebarNavItem`).
+- **Hướng dẫn kết nối MCP ngay trên `/admin/settings/mcp`** (user request) — component mới `McpConnectionGuide` (`src/components/forms/mcp-connection-guide.tsx`), hiện endpoint + lệnh CLI `claude mcp add --transport http` + snippet `.mcp.json`/`claude_desktop_config.json` (syntax xác nhận qua docs Claude Code chính thức, không đoán), mỗi khối có nút Sao chép. Endpoint ban đầu tự tính qua `headers()` (host request), sau đó user yêu cầu đổi cố định về domain production thật `https://ocean-finance-zeta.vercel.app/api/mcp` — bỏ hẳn logic tự tính, dùng hằng số `MCP_ENDPOINT`.
+- **Rà đồng bộ MCP tool ↔ tính năng thật (user request):** phát hiện + vá khoảng trống — xem chi tiết đầy đủ ở `context/spec.md` §32 Changelog 2026-08-20. Tóm tắt: `EmployeeReceipt`/`PageStatusOption` có full CRUD ở Web từ lâu nhưng chưa từng có MCP tool (không phải quyết định có chủ đích như `EmployeeProfitSettlement`) → thêm 8 tool mới (`list/create/update/delete_employee_receipt`, `list/create/update/delete_page_status_option`), tổng 31→39 tool. Thêm 2 test round-trip mới vào `tests/integration/mcp-server.test.ts` (29/29 pass, gồm assertion `delete_page_status_option` reject khi thiếu `confirm` — vì đây là **hard delete**, không phải soft delete như mọi tool delete khác).
+
+**Kết quả kiểm thử:** `tsc`/`lint` sạch sau từng thay đổi; `tests/integration/mcp-server.test.ts` 29/29 pass; full `npm run test` chạy lại sau cùng để xác nhận không có regression ở các suite khác.
+
+**Điểm dừng:** Không chính thức (ad-hoc). Tiếp tục nhận yêu cầu tiếp theo từ user.
 
 ---
 

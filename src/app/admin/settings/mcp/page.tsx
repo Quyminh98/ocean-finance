@@ -3,10 +3,16 @@ import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusChip } from "@/components/tables/status-chip";
 import { CreateMcpClientDialog } from "@/components/forms/create-mcp-client-dialog";
+import { McpConnectionGuide } from "@/components/forms/mcp-connection-guide";
 import { RevokeMcpClientButton } from "@/components/forms/revoke-mcp-client-button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/dates";
 import { listMcpClients } from "@/server/services/mcp-client.service";
+
+// Fixed production domain, not derived from the request host — the key is
+// meant to point AI agents at the real deployment regardless of where this
+// settings page happens to be viewed from (e.g. localhost during dev).
+const MCP_ENDPOINT = "https://ocean-finance-zeta.vercel.app/api/mcp";
 
 export default async function SettingsMcpPage() {
   const clients = await listMcpClients();
@@ -18,6 +24,8 @@ export default async function SettingsMcpPage() {
         description="Quản lý API key cấp cho Claude Code / AI agent — quyền tương đương Admin."
         action={<CreateMcpClientDialog />}
       />
+
+      <McpConnectionGuide endpoint={MCP_ENDPOINT} />
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-container-lowest">
         {clients.length === 0 ? (
