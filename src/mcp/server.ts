@@ -27,9 +27,22 @@ import {
   updateAdminReceipt,
   softDeleteAdminReceipt,
 } from "@/server/services/receipt.service";
+import {
+  listEmployeeReceipts,
+  createEmployeeReceipt,
+  updateEmployeeReceipt,
+  softDeleteEmployeeReceipt,
+} from "@/server/services/employee-receipt.service";
+import {
+  listPageStatusOptionsWithUsage,
+  createPageStatusOption,
+  updatePageStatusOption,
+  deletePageStatusOption,
+} from "@/server/services/page-status-option.service";
 import { listAuditLogs } from "@/server/services/audit.service";
 import { parseMonthKey } from "@/lib/month";
 import { currentDateKey } from "@/lib/dates";
+import { PAGE_STATUS_COLORS } from "@/server/validators/page-status-option.schema";
 
 const monthSchema = z
   .string()
@@ -282,6 +295,45 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     },
     async (input) =>
       runMcpTool({ mcpClientId, action: "READ", entityType: "AdminReceipt", run: () => listAdminReceipts(input) }),
+  );
+
+  server.registerTool(
+    "list_employee_receipts",
+    {
+      title: "Danh sách tiền nhân viên đã nhận",
+      description:
+        "Liệt kê EmployeeReceipt (tiền nhân viên THỰC NHẬN, spec §20a) — thuần bản ghi để xem, không cộng vào Employee Cost/Revenue hay bất kỳ công thức tài chính nào khác. Lọc theo tháng, nhân viên.",
+      inputSchema: z.object({
+        month: monthSchema,
+        employeeId: z.uuid().optional(),
+        ...pageArgs,
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async (input) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "EmployeeReceipt",
+        run: () => listEmployeeReceipts(input),
+      }),
+  );
+
+  server.registerTool(
+    "list_page_status_options",
+    {
+      title: "Danh sách loại trạng thái Page",
+      description: "Liệt kê PageStatusOption (nhãn trạng thái Page do Admin định nghĩa, spec §15.3) kèm số Page đang dùng mỗi loại.",
+      inputSchema: z.object({}),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async () =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "PageStatusOption",
+        run: () => listPageStatusOptionsWithUsage(),
+      }),
   );
 
   server.registerTool(
@@ -890,6 +942,163 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
           requireConfirm(confirm);
           await softDeleteAdminReceipt(adminReceiptId, createdByAdminId, auditMeta);
           return { adminReceiptId, deleted: true };
+        },
+      }),
+  );
+
+  // ---------------------------------------------------------------------
+  // EmployeeReceipt (spec §20a) + PageStatusOption (spec §15.3) write tools
+  // — added 2026-08-20: both entities shipped full CRUD in the Web app
+  // (Phase 13.1/13.2) before the original Phase 16 write-tool sweep, which
+  // only covered spec §32's original entity list and missed these two (no
+  // "deliberate exclusion" note exists for either, unlike EmployeeProfitSettlement
+  // — see plan.md). Same Service Layer, same runMcpTool/confirm pattern as
+  // every tool above.
+  // ---------------------------------------------------------------------
+
+  server.registerTool(
+    "create_employee_receipt",
+    {
+      title: "Ghi nhận tiền nhân viên đã nhận",
+      description:
+        "Ghi nhận khoản tiền nhân viên THỰC NHẬN theo tháng (spec §20a) — thuần bản ghi để xem, không cộng vào Employee Cost/Revenue. Nhập lại cho cùng nhân viên+tháng sẽ ghi đè số tiền/ghi chú, không tạo trùng.",
+      inputSchema: z.object({
+        employeeId: z.uuid(),
+        receiptMonth: requiredMonthSchema,
+        amount: mcpAmountSchema,
+        note: mcpNoteSchema,
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ employeeId, receiptMonth, amount, note }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "CREATE",
+        entityType: "EmployeeReceipt",
+        auditOnSuccess: false,
+        run: () =>
+          createEmployeeReceipt(
+            { employeeId, receiptMonth: requiredMonthToDate(receiptMonth), amount: BigInt(amount), note },
+            createdByAdminId,
+            auditMeta,
+          ),
+      }),
+  );
+
+  server.registerTool(
+    "update_employee_receipt",
+    {
+      title: "Sửa tiền nhân viên đã nhận",
+      description: "Đổi nhân viên/tháng/số tiền/ghi chú của một khoản đã ghi nhận.",
+      inputSchema: z.object({
+        employeeReceiptId: z.uuid(),
+        employeeId: z.uuid(),
+        receiptMonth: requiredMonthSchema,
+        amount: mcpAmountSchema,
+        note: mcpNoteSchema,
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ employeeReceiptId, employeeId, receiptMonth, amount, note }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "UPDATE",
+        entityType: "EmployeeReceipt",
+        entityId: employeeReceiptId,
+        auditOnSuccess: false,
+        run: () =>
+          updateEmployeeReceipt(
+            employeeReceiptId,
+            { employeeId, receiptMonth: requiredMonthToDate(receiptMonth), amount: BigInt(amount), note },
+            createdByAdminId,
+            auditMeta,
+          ),
+      }),
+  );
+
+  server.registerTool(
+    "delete_employee_receipt",
+    {
+      title: "Xoá tiền nhân viên đã nhận",
+      description: "Soft delete. Destructive action, yêu cầu confirm:true (spec §33).",
+      inputSchema: z.object({ employeeReceiptId: z.uuid(), confirm: confirmSchema }),
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async ({ employeeReceiptId, confirm }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "DELETE",
+        entityType: "EmployeeReceipt",
+        entityId: employeeReceiptId,
+        auditOnSuccess: false,
+        run: async () => {
+          requireConfirm(confirm);
+          await softDeleteEmployeeReceipt(employeeReceiptId, createdByAdminId, auditMeta);
+          return { employeeReceiptId, deleted: true };
+        },
+      }),
+  );
+
+  const pageStatusColorSchema = z.enum(PAGE_STATUS_COLORS, { error: "Màu không hợp lệ." });
+  const pageStatusLabelSchema = z.string().trim().min(1).max(30, { error: "Tên tối đa 30 ký tự." });
+
+  server.registerTool(
+    "create_page_status_option",
+    {
+      title: "Tạo loại trạng thái Page",
+      description: "Tạo một nhãn trạng thái mới cho Page (Cài đặt → Loại trạng thái Page, spec §15.3) — màu chỉ nhận preset swatch, không phải hex tự do.",
+      inputSchema: z.object({ label: pageStatusLabelSchema, color: pageStatusColorSchema }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ label, color }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "CREATE",
+        entityType: "PageStatusOption",
+        auditOnSuccess: false,
+        run: () => createPageStatusOption({ label, color }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "update_page_status_option",
+    {
+      title: "Sửa loại trạng thái Page",
+      description: "Đổi tên/màu một loại trạng thái Page đã có.",
+      inputSchema: z.object({ optionId: z.uuid(), label: pageStatusLabelSchema, color: pageStatusColorSchema }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ optionId, label, color }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "UPDATE",
+        entityType: "PageStatusOption",
+        entityId: optionId,
+        auditOnSuccess: false,
+        run: () => updatePageStatusOption(optionId, { label, color }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "delete_page_status_option",
+    {
+      title: "Xoá loại trạng thái Page",
+      description:
+        "Hard delete — khác mọi entity khác trong bộ tool này (đây là metadata hiển thị thuần tuý, không phải dữ liệu tài chính, xem schema.md). Page đang gắn nhãn này tự mất đúng nhãn đó (ON DELETE CASCADE), không mất nhãn khác. Destructive action, yêu cầu confirm:true (spec §33).",
+      inputSchema: z.object({ optionId: z.uuid(), confirm: confirmSchema }),
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async ({ optionId, confirm }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "DELETE",
+        entityType: "PageStatusOption",
+        entityId: optionId,
+        auditOnSuccess: false,
+        run: async () => {
+          requireConfirm(confirm);
+          await deletePageStatusOption(optionId, createdByAdminId, auditMeta);
+          return { optionId, deleted: true };
         },
       }),
   );

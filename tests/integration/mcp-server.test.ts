@@ -78,6 +78,8 @@ const createdPageIds: string[] = [];
 const createdMcpClientIds: string[] = [];
 const createdAdminExpenseIds: string[] = [];
 const createdAdminReceiptIds: string[] = [];
+const createdEmployeeReceiptIds: string[] = [];
+const createdPageStatusOptionIds: string[] = [];
 
 beforeAll(async () => {
   const admin = await prisma.user.create({
@@ -140,6 +142,10 @@ afterAll(async () => {
   await prisma.adExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.adminExpense.deleteMany({ where: { id: { in: createdAdminExpenseIds } } });
   await prisma.adminReceipt.deleteMany({ where: { id: { in: createdAdminReceiptIds } } });
+  await prisma.employeeReceipt.deleteMany({ where: { id: { in: createdEmployeeReceiptIds } } });
+  // delete_page_status_option is a hard delete (spec §15.3) — its own test already
+  // removes the row, this is just a defensive catch-all if that step never ran.
+  await prisma.pageStatusOption.deleteMany({ where: { id: { in: createdPageStatusOptionIds } } });
   await prisma.pagePurchaseExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.pageAssignment.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.page.deleteMany({ where: { id: { in: createdPageIds } } });
@@ -315,6 +321,8 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
   let flowAdExpenseId: string;
   let flowAdminExpenseId: string;
   let flowAdminReceiptId: string;
+  let flowEmployeeReceiptId: string;
+  let flowPageStatusOptionId: string;
 
   it("create_employee creates a User+EmployeeProfile and returns a one-time temp password", async () => {
     const client = await connectFreshWriteClient();
@@ -661,6 +669,80 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
     const receipt = await prisma.adminReceipt.findUniqueOrThrow({ where: { id: flowAdminReceiptId } });
     expect(receipt.amount).toBe(3_500_000n);
     expect(receipt.deletedAt).not.toBeNull();
+  });
+
+  it("create_employee_receipt / update_employee_receipt / delete_employee_receipt round-trip, list_employee_receipts finds it (spec §20a, added 2026-08-20)", async () => {
+    const client = await connectFreshWriteClient();
+    const created = await client.callTool({
+      name: "create_employee_receipt",
+      arguments: { employeeId, receiptMonth: "2026-09", amount: 1_000_000 },
+    });
+    const createdEnvelope = parseEnvelope(created);
+    expect(createdEnvelope.success).toBe(true);
+    flowEmployeeReceiptId = (createdEnvelope.data as { employeeReceiptId: string }).employeeReceiptId;
+    createdEmployeeReceiptIds.push(flowEmployeeReceiptId);
+
+    const listed = await client.callTool({ name: "list_employee_receipts", arguments: { employeeId } });
+    const listedEnvelope = parseEnvelope(listed);
+    expect(listedEnvelope.success).toBe(true);
+    expect((listedEnvelope.data as { items: Array<{ employeeReceiptId: string }> }).items.map((r) => r.employeeReceiptId)).toContain(
+      flowEmployeeReceiptId,
+    );
+
+    const updated = await client.callTool({
+      name: "update_employee_receipt",
+      arguments: { employeeReceiptId: flowEmployeeReceiptId, employeeId, receiptMonth: "2026-09", amount: 1_200_000 },
+    });
+    expect(parseEnvelope(updated).success).toBe(true);
+
+    const confirmedDelete = await client.callTool({
+      name: "delete_employee_receipt",
+      arguments: { employeeReceiptId: flowEmployeeReceiptId, confirm: true },
+    });
+    await client.close();
+
+    expect(parseEnvelope(confirmedDelete).success).toBe(true);
+    const receipt = await prisma.employeeReceipt.findUniqueOrThrow({ where: { id: flowEmployeeReceiptId } });
+    expect(receipt.amount).toBe(1_200_000n);
+    expect(receipt.deletedAt).not.toBeNull();
+  });
+
+  it("create_page_status_option / update_page_status_option / delete_page_status_option round-trip (hard delete), list_page_status_options finds it (spec §15.3, added 2026-08-20)", async () => {
+    const client = await connectFreshWriteClient();
+    const created = await client.callTool({
+      name: "create_page_status_option",
+      arguments: { label: `MCP test tag ${randomUUID().slice(0, 8)}`, color: "BLUE" },
+    });
+    const createdEnvelope = parseEnvelope(created);
+    expect(createdEnvelope.success).toBe(true);
+    flowPageStatusOptionId = (createdEnvelope.data as { optionId: string }).optionId;
+    createdPageStatusOptionIds.push(flowPageStatusOptionId);
+
+    const listed = await client.callTool({ name: "list_page_status_options", arguments: {} });
+    const listedEnvelope = parseEnvelope(listed);
+    expect(listedEnvelope.success).toBe(true);
+    expect((listedEnvelope.data as Array<{ optionId: string }>).map((o) => o.optionId)).toContain(flowPageStatusOptionId);
+
+    const updated = await client.callTool({
+      name: "update_page_status_option",
+      arguments: { optionId: flowPageStatusOptionId, label: "MCP test tag v2", color: "PINK" },
+    });
+    expect(parseEnvelope(updated).success).toBe(true);
+
+    const rejectedDelete = await client.callTool({
+      name: "delete_page_status_option",
+      arguments: { optionId: flowPageStatusOptionId },
+    });
+    expect(parseEnvelope(rejectedDelete).error?.code).toBe("CONFIRMATION_REQUIRED");
+
+    const confirmedDelete = await client.callTool({
+      name: "delete_page_status_option",
+      arguments: { optionId: flowPageStatusOptionId, confirm: true },
+    });
+    await client.close();
+
+    expect(parseEnvelope(confirmedDelete).success).toBe(true);
+    await expect(prisma.pageStatusOption.findUniqueOrThrow({ where: { id: flowPageStatusOptionId } })).rejects.toThrow();
   });
 });
 
