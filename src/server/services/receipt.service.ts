@@ -42,6 +42,7 @@ export type AdminReceiptListResult = {
 export type ListAdminReceiptsParams = {
   month?: string;
   createdByAdminId?: string;
+  receivedByAdminId?: string;
   page?: number;
   pageSize?: AdminReceiptPageSize;
 };
@@ -55,6 +56,7 @@ export async function listAdminReceipts(params: ListAdminReceiptsParams): Promis
     deletedAt: null,
     ...(monthFilter ? { receiptMonth: monthFilter } : {}),
     ...(params.createdByAdminId ? { createdByAdminId: params.createdByAdminId } : {}),
+    ...(params.receivedByAdminId ? { receivedByAdminId: params.receivedByAdminId } : {}),
   };
 
   const [total, rows] = await Promise.all([

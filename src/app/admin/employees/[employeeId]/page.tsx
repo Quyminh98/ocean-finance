@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Receipt, FileText, Megaphone, ExternalLink } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { SummaryStat } from "@/components/shared/summary-stat";
 import { StatusChip } from "@/components/tables/status-chip";
 import { PageStatusChipList } from "@/components/tables/page-status-chip-list";
 import { PageTypeChip } from "@/components/tables/page-type-chip";
@@ -14,7 +15,6 @@ import { DeactivateEmployeeButton } from "@/components/forms/deactivate-employee
 import { SettleProfitButton } from "@/components/forms/settle-profit-button";
 import { MonthlyRevenueChart } from "@/components/dashboard/monthly-revenue-chart";
 import { formatVnd, REVENUE_TEXT_CLASS, EXPENSE_TEXT_CLASS, profitTextClass } from "@/lib/money";
-import { cn } from "@/lib/utils";
 import { formatMonth } from "@/lib/dates";
 import { getEmployeeDetail, getEmployeeFinancials, getEmployeeMonthlySeries } from "@/server/services/employee.service";
 import { getSalaryHistory } from "@/server/services/salary.service";
@@ -375,11 +375,3 @@ function shortMonthLabel(monthKey: string): string {
   return `${month}/${year.slice(2)}`;
 }
 
-function SummaryStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="rounded-lg border border-border-subtle bg-surface-container-lowest p-card-padding">
-      <p className="font-label-caps text-label-caps uppercase text-on-surface-variant">{label}</p>
-      <p className={cn("mt-stack-sm font-headline-sm text-headline-sm", tone ?? "text-on-surface")}>{value}</p>
-    </div>
-  );
-}

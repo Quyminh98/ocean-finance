@@ -39,6 +39,7 @@ import {
   updatePageStatusOption,
   deletePageStatusOption,
 } from "@/server/services/page-status-option.service";
+import { listAdminOptions } from "@/server/services/user-account.service";
 import { listAuditLogs } from "@/server/services/audit.service";
 import { parseMonthKey } from "@/lib/month";
 import { currentDateKey } from "@/lib/dates";
@@ -149,6 +150,19 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
           };
         },
       }),
+  );
+
+  server.registerTool(
+    "list_admins",
+    {
+      title: "Danh sách Admin",
+      description:
+        "Liệt kê mọi tài khoản Admin ({adminId, name}) — dùng để tra ra UUID trước khi gọi các tool cần `paidByAdminId`/`receivedByAdminId`/`createdByAdminId` (vd `set_employee_salary`, `create_ad_expense`, `create_admin_receipt`...), tránh phải dò qua các tool khác chỉ để tìm id theo tên Admin.",
+      inputSchema: z.object({}),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async () =>
+      runMcpTool({ mcpClientId, action: "READ", entityType: "User", run: () => listAdminOptions() }),
   );
 
   server.registerTool(

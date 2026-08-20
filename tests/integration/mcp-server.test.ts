@@ -215,6 +215,17 @@ describe("Read-only MCP tools (spec §32/§34, plan.md Phase 15)", () => {
     );
   });
 
+  it("list_admins finds the fixture Admin by id (added 2026-08-20, fixes the multi-call name→id lookup problem)", async () => {
+    const client = await connectClient(apiKey);
+    const result = await client.callTool({ name: "list_admins", arguments: {} });
+    const envelope = parseEnvelope(result);
+    await client.close();
+
+    expect(envelope.success).toBe(true);
+    const data = envelope.data as Array<{ adminId: string; name: string }>;
+    expect(data.some((admin) => admin.adminId === adminId)).toBe(true);
+  });
+
   it("list_employees finds the fixture by search and status filter", async () => {
     const client = await connectClient(apiKey);
     const result = await client.callTool({

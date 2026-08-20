@@ -634,3 +634,19 @@ export async function listPagePurchaseExpensesByEmployee(employeeId: string): Pr
     paidByAdminName: row.paidByAdmin.name,
   }));
 }
+
+/** Same shape as `listPagePurchaseExpensesByEmployee`, scoped by `paidByAdminId` instead — Admin Detail "Chi tiết đã chi" (user request 2026-08-20). */
+export async function listPagePurchaseExpensesByAdmin(adminId: string): Promise<PagePurchaseExpenseListItem[]> {
+  const rows = await prisma.pagePurchaseExpense.findMany({
+    where: { paidByAdminId: adminId, deletedAt: null },
+    orderBy: { purchaseMonth: "desc" },
+    include: { page: { select: { name: true } }, paidByAdmin: { select: { name: true } } },
+  });
+  return rows.map((row) => ({
+    pageId: row.pageId,
+    pageName: row.page.name,
+    purchaseMonth: row.purchaseMonth,
+    amount: row.amount,
+    paidByAdminName: row.paidByAdmin.name,
+  }));
+}

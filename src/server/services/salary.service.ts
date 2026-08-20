@@ -20,6 +20,35 @@ export async function getSalaryHistory(employeeId: string): Promise<SalaryHistor
   return rows;
 }
 
+export type ActiveSalaryByAdminItem = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  monthlySalary: bigint;
+  effectiveFrom: Date;
+};
+
+/**
+ * Every currently-active (`effectiveTo = null`) SalaryHistory row this Admin
+ * pays — Admin Detail "Chi tiết đã chi" (user request 2026-08-20), mirrors
+ * the "chỉ hiện lương đang hiệu lực, không hiện giai đoạn đã đóng" convention
+ * already used for Employee Detail/`/user/costs` (spec §14.3 Changelog).
+ */
+export async function listActiveSalariesByAdmin(adminId: string): Promise<ActiveSalaryByAdminItem[]> {
+  const rows = await prisma.salaryHistory.findMany({
+    where: { paidByAdminId: adminId, effectiveTo: null },
+    orderBy: { effectiveFrom: "desc" },
+    include: { employee: { include: { user: { select: { name: true } } } } },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    employeeId: row.employeeId,
+    employeeName: row.employee.user.name,
+    monthlySalary: row.monthlySalary,
+    effectiveFrom: row.effectiveFrom,
+  }));
+}
+
 export const SALARY_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 export type SalaryPageSize = (typeof SALARY_PAGE_SIZE_OPTIONS)[number];
 

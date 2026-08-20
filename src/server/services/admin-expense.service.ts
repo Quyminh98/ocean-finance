@@ -36,6 +36,7 @@ export type AdminExpenseListResult = {
 export type ListAdminExpensesParams = {
   month?: string;
   createdByAdminId?: string;
+  paidByAdminId?: string;
   page?: number;
   pageSize?: AdminExpensePageSize;
   /** Restore view (spec §19/§28 "Có thể restore bởi Admin") — default lists active rows only. */
@@ -60,6 +61,7 @@ export async function listAdminExpenses(params: ListAdminExpensesParams): Promis
     deletedAt: params.deleted ? { not: null } : null,
     ...(range ? { expenseDate: { gte: range.gte, lt: range.lt } } : {}),
     ...(params.createdByAdminId ? { createdByAdminId: params.createdByAdminId } : {}),
+    ...(params.paidByAdminId ? { paidByAdminId: params.paidByAdminId } : {}),
   };
 
   const [total, rows] = await Promise.all([

@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
   Users,
+  ShieldCheck,
   FileText,
   Receipt,
   Megaphone,
@@ -35,7 +36,10 @@ export const adminNavGroups: NavGroup[] = [
   },
   {
     label: "Nhân sự",
-    items: [{ label: "Nhân viên", href: "/admin/employees", icon: Users }],
+    items: [
+      { label: "Nhân viên", href: "/admin/employees", icon: Users },
+      { label: "Admin", href: "/admin/admins", icon: ShieldCheck },
+    ],
   },
   {
     label: "Page",

@@ -38,6 +38,7 @@ export type ListAdExpenseParams = {
   month?: string;
   employeeId?: string;
   pageId?: string;
+  paidByAdminId?: string;
   search?: string;
   page?: number;
   pageSize?: AdExpensePageSize;
@@ -63,6 +64,7 @@ export async function listAdExpenses(params: ListAdExpenseParams): Promise<AdExp
     ...(monthFilter ? { expenseMonth: monthFilter } : {}),
     ...(params.employeeId ? { employeeIdSnapshot: params.employeeId } : {}),
     ...(params.pageId ? { pageId: params.pageId } : {}),
+    ...(params.paidByAdminId ? { paidByAdminId: params.paidByAdminId } : {}),
     ...(search
       ? {
           OR: [
