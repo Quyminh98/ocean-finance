@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/db";
 import { logAction, auditActorFields } from "@/server/audit/log-action";
 import type { AuditMeta } from "@/server/services/employee.service";
-import { resolvePageOwner } from "@/server/services/assignment.service";
 
 export class AdExpenseError extends Error {
   code: string;
@@ -16,8 +15,6 @@ export type AdExpensePageSize = (typeof AD_EXPENSE_PAGE_SIZE_OPTIONS)[number];
 
 export type AdExpenseListItem = {
   adExpenseId: string;
-  pageId: string;
-  pageName: string;
   employeeId: string;
   employeeName: string;
   expenseMonth: Date;
@@ -37,7 +34,6 @@ export type AdExpenseListResult = {
 export type ListAdExpenseParams = {
   month?: string;
   employeeId?: string;
-  pageId?: string;
   paidByAdminId?: string;
   search?: string;
   page?: number;
@@ -62,13 +58,12 @@ export async function listAdExpenses(params: ListAdExpenseParams): Promise<AdExp
   const where = {
     deletedAt: null,
     ...(monthFilter ? { expenseMonth: monthFilter } : {}),
-    ...(params.employeeId ? { employeeIdSnapshot: params.employeeId } : {}),
-    ...(params.pageId ? { pageId: params.pageId } : {}),
+    ...(params.employeeId ? { employeeId: params.employeeId } : {}),
     ...(params.paidByAdminId ? { paidByAdminId: params.paidByAdminId } : {}),
     ...(search
       ? {
           OR: [
-            { page: { name: { contains: search, mode: "insensitive" as const } } },
+            { employee: { user: { name: { contains: search, mode: "insensitive" as const } } } },
             { note: { contains: search, mode: "insensitive" as const } },
           ],
         }
@@ -83,8 +78,7 @@ export async function listAdExpenses(params: ListAdExpenseParams): Promise<AdExp
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
-        page: { select: { name: true } },
-        employeeSnapshot: { include: { user: { select: { name: true } } } },
+        employee: { include: { user: { select: { name: true } } } },
         paidByAdmin: { select: { name: true } },
       },
     }),
@@ -92,10 +86,8 @@ export async function listAdExpenses(params: ListAdExpenseParams): Promise<AdExp
 
   const items: AdExpenseListItem[] = rows.map((row) => ({
     adExpenseId: row.id,
-    pageId: row.pageId,
-    pageName: row.page.name,
-    employeeId: row.employeeIdSnapshot,
-    employeeName: row.employeeSnapshot.user.name,
+    employeeId: row.employeeId,
+    employeeName: row.employee.user.name,
     expenseMonth: row.expenseMonth,
     amount: row.amount,
     note: row.note,
@@ -107,7 +99,7 @@ export async function listAdExpenses(params: ListAdExpenseParams): Promise<AdExp
 }
 
 export type CreateAdExpenseInput = {
-  pageId: string;
+  employeeId: string;
   expenseMonth: Date;
   amount: bigint;
   note?: string;
@@ -117,28 +109,27 @@ export type CreateAdExpenseInput = {
 export type CreateAdExpenseResult = { adExpenseId: string; wasUpdate: boolean };
 
 /**
- * Create AdExpense — owner is always resolved server-side via `resolvePageOwner`
- * against the 1st of the month (spec §6, CLAUDE.md), never chosen by the
- * Admin. A Page allows at most one active record per month
- * (`ad_expenses_page_month_unique`) — submitting again for a Page+month that
- * already has an active record overwrites its amount/note instead of
- * creating a second row (confirmed with user 2026-08-17).
+ * Create AdExpense — nhập trực tiếp theo nhân viên (user request 2026-08-20,
+ * đảo lại thiết kế Page-scoped trước đó). Một nhân viên chỉ có tối đa một
+ * record đang hoạt động mỗi tháng (`ad_expenses_employee_month_unique`) —
+ * submitting again for an employee+month that already has an active record
+ * overwrites its amount/note instead of creating a second row (giữ nguyên
+ * hành vi upsert-overwrite đã có từ trước).
  */
 export async function createAdExpense(
   input: CreateAdExpenseInput,
   adminId: string,
   meta: AuditMeta = {},
 ): Promise<CreateAdExpenseResult> {
-  const page = await prisma.page.findUnique({ where: { id: input.pageId } });
-  if (!page || page.deletedAt) throw new AdExpenseError("Không tìm thấy Page.", "NOT_FOUND");
+  const employee = await prisma.employeeProfile.findUnique({ where: { id: input.employeeId } });
+  if (!employee) throw new AdExpenseError("Không tìm thấy nhân viên.", "NOT_FOUND");
 
   const payer = await prisma.user.findUnique({ where: { id: input.paidByAdminId } });
   if (!payer || payer.role !== "ADMIN") throw new AdExpenseError("Người chi không hợp lệ.", "INVALID_PAYER");
 
   const { row, wasUpdate, before } = await prisma.$transaction(async (tx) => {
-    const owner = await resolvePageOwner(input.pageId, input.expenseMonth, tx);
     const existing = await tx.adExpense.findFirst({
-      where: { pageId: input.pageId, expenseMonth: input.expenseMonth, deletedAt: null },
+      where: { employeeId: input.employeeId, expenseMonth: input.expenseMonth, deletedAt: null },
     });
 
     if (existing) {
@@ -147,8 +138,6 @@ export async function createAdExpense(
         data: {
           amount: input.amount,
           note: input.note ?? null,
-          employeeIdSnapshot: owner.employeeId,
-          assignmentIdSnapshot: owner.assignmentId,
           paidByAdminId: input.paidByAdminId,
         },
       });
@@ -161,9 +150,7 @@ export async function createAdExpense(
 
     const created = await tx.adExpense.create({
       data: {
-        pageId: input.pageId,
-        employeeIdSnapshot: owner.employeeId,
-        assignmentIdSnapshot: owner.assignmentId,
+        employeeId: input.employeeId,
         expenseMonth: input.expenseMonth,
         amount: input.amount,
         note: input.note,
@@ -181,8 +168,7 @@ export async function createAdExpense(
     entityId: row.id,
     beforeJson: before,
     afterJson: {
-      pageId: input.pageId,
-      employeeIdSnapshot: row.employeeIdSnapshot,
+      employeeId: input.employeeId,
       expenseMonth: input.expenseMonth.toISOString().slice(0, 7),
       amount: input.amount.toString(),
       note: input.note ?? null,
@@ -196,14 +182,14 @@ export async function createAdExpense(
 }
 
 export type UpdateAdExpenseInput = {
-  pageId: string;
+  employeeId: string;
   expenseMonth: Date;
   amount: bigint;
   note?: string;
   paidByAdminId: string;
 };
 
-/** Edit AdExpense — Page/month changes re-resolve the owner snapshot (schema.md AdExpense). */
+/** Edit AdExpense — moving to a different employee+month is allowed as long as it doesn't collide with an existing active record there. */
 export async function updateAdExpense(
   adExpenseId: string,
   input: UpdateAdExpenseInput,
@@ -213,42 +199,39 @@ export async function updateAdExpense(
   const existing = await prisma.adExpense.findUnique({ where: { id: adExpenseId } });
   if (!existing || existing.deletedAt) throw new AdExpenseError("Không tìm thấy chi phí Ads.", "NOT_FOUND");
 
-  const page = await prisma.page.findUnique({ where: { id: input.pageId } });
-  if (!page || page.deletedAt) throw new AdExpenseError("Không tìm thấy Page.", "NOT_FOUND");
+  const employee = await prisma.employeeProfile.findUnique({ where: { id: input.employeeId } });
+  if (!employee) throw new AdExpenseError("Không tìm thấy nhân viên.", "NOT_FOUND");
 
   const payer = await prisma.user.findUnique({ where: { id: input.paidByAdminId } });
   if (!payer || payer.role !== "ADMIN") throw new AdExpenseError("Người chi không hợp lệ.", "INVALID_PAYER");
 
   const conflict = await prisma.adExpense.findFirst({
-    where: { pageId: input.pageId, expenseMonth: input.expenseMonth, deletedAt: null, NOT: { id: adExpenseId } },
+    where: { employeeId: input.employeeId, expenseMonth: input.expenseMonth, deletedAt: null, NOT: { id: adExpenseId } },
   });
   if (conflict) {
-    throw new AdExpenseError("Page này đã có chi phí Ads cho tháng đó — vui lòng sửa dòng hiện có thay vì tạo trùng.", "MONTH_CONFLICT");
+    throw new AdExpenseError(
+      "Nhân viên này đã có chi phí Ads cho tháng đó — vui lòng sửa dòng hiện có thay vì tạo trùng.",
+      "MONTH_CONFLICT",
+    );
   }
 
   const before = {
-    pageId: existing.pageId,
-    employeeIdSnapshot: existing.employeeIdSnapshot,
+    employeeId: existing.employeeId,
     expenseMonth: existing.expenseMonth.toISOString().slice(0, 7),
     amount: existing.amount.toString(),
     note: existing.note,
     paidByAdminId: existing.paidByAdminId,
   };
 
-  await prisma.$transaction(async (tx) => {
-    const owner = await resolvePageOwner(input.pageId, input.expenseMonth, tx);
-    await tx.adExpense.update({
-      where: { id: adExpenseId },
-      data: {
-        pageId: input.pageId,
-        employeeIdSnapshot: owner.employeeId,
-        assignmentIdSnapshot: owner.assignmentId,
-        expenseMonth: input.expenseMonth,
-        amount: input.amount,
-        note: input.note ?? null,
-        paidByAdminId: input.paidByAdminId,
-      },
-    });
+  await prisma.adExpense.update({
+    where: { id: adExpenseId },
+    data: {
+      employeeId: input.employeeId,
+      expenseMonth: input.expenseMonth,
+      amount: input.amount,
+      note: input.note ?? null,
+      paidByAdminId: input.paidByAdminId,
+    },
   });
 
   await logAction({
@@ -258,7 +241,7 @@ export async function updateAdExpense(
     entityId: adExpenseId,
     beforeJson: before,
     afterJson: {
-      pageId: input.pageId,
+      employeeId: input.employeeId,
       expenseMonth: input.expenseMonth.toISOString().slice(0, 7),
       amount: input.amount.toString(),
       note: input.note ?? null,
@@ -282,7 +265,7 @@ export async function softDeleteAdExpense(adExpenseId: string, adminId: string, 
     entityType: "AdExpense",
     entityId: adExpenseId,
     beforeJson: {
-      pageId: existing.pageId,
+      employeeId: existing.employeeId,
       expenseMonth: existing.expenseMonth.toISOString().slice(0, 7),
       amount: existing.amount.toString(),
     },

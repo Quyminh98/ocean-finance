@@ -17,26 +17,26 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Combobox } from "@/components/ui/combobox";
 import { Field } from "@/components/forms/field";
 import { updateAdExpenseAction, type UpdateAdExpenseState } from "@/server/actions/ads.actions";
 import { UpdateAdExpenseClientSchema, type UpdateAdExpenseFormValues } from "@/server/validators/ads.schema";
-import type { PageOption } from "@/server/services/page.service";
+import type { EmployeeOption } from "@/server/services/employee.service";
 import type { AdminOption } from "@/server/services/user-account.service";
 
 type EditAdExpenseDialogProps = {
   adExpenseId: string;
-  pageOptions: PageOption[];
+  employeeOptions: EmployeeOption[];
   adminOptions: AdminOption[];
   defaultValues: UpdateAdExpenseFormValues;
 };
 
-export function EditAdExpenseDialog({ adExpenseId, pageOptions, adminOptions, defaultValues }: EditAdExpenseDialogProps) {
+export function EditAdExpenseDialog({ adExpenseId, employeeOptions, adminOptions, defaultValues }: EditAdExpenseDialogProps) {
   const [open, setOpen] = useState(false);
   const [actionState, setActionState] = useState<UpdateAdExpenseState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
 
-  const pageComboOptions = pageOptions.map((option) => ({ value: option.pageId, label: option.name }));
+  const employeeLabels: Record<string, string> = {};
+  for (const option of employeeOptions) employeeLabels[option.employeeId] = option.name;
 
   const adminLabels: Record<string, string> = {};
   for (const option of adminOptions) adminLabels[option.adminId] = option.name;
@@ -82,9 +82,7 @@ export function EditAdExpenseDialog({ adExpenseId, pageOptions, adminOptions, de
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Chỉnh sửa chi phí Ads</DialogTitle>
-          <DialogDescription>
-            Đổi Page hoặc tháng chi sẽ xác định lại nhân viên phụ trách tương ứng (theo nhân viên quản lý Page vào đầu tháng đó).
-          </DialogDescription>
+          <DialogDescription>Đổi nhân viên hoặc tháng chi — không được trùng với dòng khác đã có.</DialogDescription>
         </DialogHeader>
 
         <form id="edit-ad-expense-form" onSubmit={handleSubmit(onSubmit)} className="space-y-stack-md">
@@ -95,22 +93,26 @@ export function EditAdExpenseDialog({ adExpenseId, pageOptions, adminOptions, de
           ) : null}
 
           <Field
-            label="Page"
-            htmlFor="edit-ad-expense-pageId"
-            error={errors.pageId?.message ?? (actionState?.status === "error" ? actionState.fieldErrors?.pageId : undefined)}
+            label="Nhân viên"
+            htmlFor="edit-ad-expense-employeeId"
+            error={errors.employeeId?.message ?? (actionState?.status === "error" ? actionState.fieldErrors?.employeeId : undefined)}
           >
             <Controller
               control={control}
-              name="pageId"
+              name="employeeId"
               render={({ field }) => (
-                <Combobox
-                  id="edit-ad-expense-pageId"
-                  options={pageComboOptions}
-                  value={field.value}
-                  onValueChange={field.onChange}
-                  placeholder="Tìm Page..."
-                  emptyText="Không tìm thấy Page."
-                />
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger id="edit-ad-expense-employeeId" className="h-10 w-full rounded-lg">
+                    <SelectValue>{(value: string) => employeeLabels[value] ?? value}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {employeeOptions.map((option) => (
+                      <SelectItem key={option.employeeId} value={option.employeeId}>
+                        {option.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             />
           </Field>

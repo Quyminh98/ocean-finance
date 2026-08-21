@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { createEmployee } from "@/server/services/employee.service";
 import { createPage } from "@/server/services/page.service";
-import { transferPage } from "@/server/services/assignment.service";
+import { transferPage, assignEmployee } from "@/server/services/assignment.service";
 import { createRevenue } from "@/server/services/revenue.service";
 import { createAdExpense } from "@/server/services/ads.service";
 import { createAdminExpense } from "@/server/services/admin-expense.service";
@@ -21,6 +21,7 @@ import { parseMonthKey, shiftMonthKey } from "@/lib/month";
 
 let adminId: string;
 let employeeId: string;
+let employeeName: string;
 let employee2Id: string;
 let employee2Name: string;
 let pageId: string;
@@ -73,6 +74,7 @@ beforeAll(async () => {
     adminId,
   );
   employeeId = employee.employeeId;
+  employeeName = "Dashboard Employee 1";
   createdUserIds.push(employee.userId);
 
   const employee2 = await createEmployee(
@@ -101,7 +103,7 @@ beforeAll(async () => {
   createdPageIds.push(pageId);
 
   await createRevenue({ pageId, revenueMonth: TEST_MONTH_START, amount: REVENUE_AMOUNT }, adminId);
-  await createAdExpense({ paidByAdminId: adminId, pageId, expenseMonth: TEST_MONTH_START, amount: ADS_AMOUNT }, adminId);
+  await createAdExpense({ paidByAdminId: adminId, employeeId, expenseMonth: TEST_MONTH_START, amount: ADS_AMOUNT }, adminId);
 
   await createAdminExpense(
     { paidByAdminId: adminId,
@@ -127,7 +129,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const revenues = await prisma.revenue.findMany({ where: { pageId: { in: createdPageIds } }, select: { id: true } });
-  const ads = await prisma.adExpense.findMany({ where: { pageId: { in: createdPageIds } }, select: { id: true } });
+  const ads = await prisma.adExpense.findMany({ where: { employeeId }, select: { id: true } });
   const adminExpenses = await prisma.adminExpense.findMany({
     where: { createdByAdminId: adminId, description: "Dashboard test admin expense" },
     select: { id: true },
@@ -150,7 +152,7 @@ afterAll(async () => {
   });
 
   await prisma.revenue.deleteMany({ where: { pageId: { in: createdPageIds } } });
-  await prisma.adExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
+  await prisma.adExpense.deleteMany({ where: { employeeId } });
   await prisma.pagePurchaseExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.pageAssignment.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.page.deleteMany({ where: { id: { in: createdPageIds } } });
@@ -361,12 +363,93 @@ describe("getAdminSpendingBreakdown", () => {
   });
 });
 
+describe("getSystemFinancials / getAdminSpendingBreakdown — bare Page pending assignment (user report 2026-08-20 \"page chưa gán thì bị chưa tính chi phí cho admin chi\")", () => {
+  const BARE_PURCHASE_AMOUNT = 3_500_000n;
+  let bareAdminId: string;
+  let barePageId: string;
+  let bareEmployeeId: string;
+  const bareUserIds: string[] = [];
+
+  beforeAll(async () => {
+    const admin = await prisma.user.create({
+      data: {
+        name: "Test Admin (bare page)",
+        email: `test-admin-${randomUUID()}@example.test`,
+        passwordHash: "x",
+        role: "ADMIN",
+        status: "ACTIVE",
+      },
+    });
+    bareAdminId = admin.id;
+    bareUserIds.push(admin.id);
+
+    const employee = await createEmployee(
+      { name: "Bare Page Employee", email: `test-employee-${randomUUID()}@example.test`, status: "ACTIVE" },
+      bareAdminId,
+    );
+    bareEmployeeId = employee.employeeId;
+    bareUserIds.push(employee.userId);
+
+    // No `assignEmployeeId` — Page has a price + payer but no owner yet, so
+    // `createPage()` does NOT create a PagePurchaseExpense (spec §5, deferred
+    // until first assignment).
+    const page = await createPage(
+      {
+        name: `Bare Page ${randomUUID()}`,
+        facebookUrl: "https://facebook.com/bare-test-page",
+        purchasePrice: BARE_PURCHASE_AMOUNT,
+        purchaseMonth: TEST_MONTH_START,
+        paidByAdminId: bareAdminId,
+      },
+      bareAdminId,
+    );
+    barePageId = page.pageId;
+  });
+
+  afterAll(async () => {
+    await prisma.auditLog.deleteMany({ where: { entityType: "Page", entityId: barePageId } });
+    await prisma.pagePurchaseExpense.deleteMany({ where: { pageId: barePageId } });
+    await prisma.pageAssignment.deleteMany({ where: { pageId: barePageId } });
+    await prisma.page.deleteMany({ where: { id: barePageId } });
+    await prisma.employeeProfile.deleteMany({ where: { userId: { in: bareUserIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: bareUserIds } } });
+  });
+
+  it("counts the pending purchase price in getSystemFinancials before any employee is assigned", async () => {
+    const financials = await getSystemFinancials(TEST_MONTH);
+    // Delta-based: other fixtures in this file already contribute to TEST_MONTH's pagePurchaseCost.
+    const withoutBare = financials.pagePurchaseCost - BARE_PURCHASE_AMOUNT;
+    expect(withoutBare).toBeGreaterThanOrEqual(0n);
+
+    const noPage = await prisma.page.findUnique({ where: { id: barePageId }, select: { purchaseExpense: true } });
+    expect(noPage?.purchaseExpense).toBeNull();
+  });
+
+  it("counts the pending purchase price under the paying admin in getAdminSpendingBreakdown before assignment", async () => {
+    const rows = await getAdminSpendingBreakdown(TEST_MONTH);
+    const row = rows.find((r) => r.adminId === bareAdminId);
+    expect(row?.pagePurchaseCost).toBe(BARE_PURCHASE_AMOUNT);
+    expect(row?.total).toBe(BARE_PURCHASE_AMOUNT);
+  });
+
+  it("once assigned, the real PagePurchaseExpense takes over with no double-counting", async () => {
+    await assignEmployee(barePageId, { employeeId: bareEmployeeId, effectiveDate: TEST_MONTH_START }, bareAdminId);
+
+    const purchaseExpense = await prisma.pagePurchaseExpense.findUnique({ where: { pageId: barePageId } });
+    expect(purchaseExpense?.amount).toBe(BARE_PURCHASE_AMOUNT);
+
+    const rows = await getAdminSpendingBreakdown(TEST_MONTH);
+    const row = rows.find((r) => r.adminId === bareAdminId);
+    expect(row?.pagePurchaseCost).toBe(BARE_PURCHASE_AMOUNT);
+  });
+});
+
 describe("getRecentActivity", () => {
   it("surfaces Revenue/Ads/Page/Transfer/AdminExpense/AdminReceipt events, newest first (spec §11.4)", async () => {
     const { items } = await getRecentActivity({ pageSize: 20 });
 
     expect(items.some((i) => i.type === "REVENUE" && i.message.includes(pageName) && i.message.includes(formatVnd(REVENUE_AMOUNT)))).toBe(true);
-    expect(items.some((i) => i.type === "ADS" && i.message.includes(pageName) && i.message.includes(formatVnd(ADS_AMOUNT)))).toBe(true);
+    expect(items.some((i) => i.type === "ADS" && i.message.includes(employeeName) && i.message.includes(formatVnd(ADS_AMOUNT)))).toBe(true);
     expect(items.some((i) => i.type === "PAGE_NEW" && i.message.includes(pageName))).toBe(true);
     expect(items.some((i) => i.type === "PAGE_TRANSFER" && i.message.includes(pageName) && i.message.includes(employee2Name))).toBe(true);
     expect(items.some((i) => i.type === "ADMIN_EXPENSE" && i.message.includes(formatVnd(ADMIN_EXPENSE_AMOUNT)))).toBe(true);

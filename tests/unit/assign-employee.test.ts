@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { createEmployee } from "@/server/services/employee.service";
+import { createEmployee, getEmployeeFinancials } from "@/server/services/employee.service";
 import { createPage, PageError } from "@/server/services/page.service";
 import { assignEmployee, getAssignmentHistory } from "@/server/services/assignment.service";
 
@@ -137,6 +137,23 @@ describe("assignEmployee (first-time assignment)", () => {
       where: { entityType: "Page", entityId: page.pageId, action: "ASSIGN" },
     });
     expect(audit).not.toBeNull();
+
+    // Not just "the row exists" — confirm it actually flows into this employee's
+    // Employee Cost (spec §10.2), the thing an Admin actually reads on Employee
+    // Detail/List (user report 2026-08-20 "khi gán page, chi phí page đó đã
+    // được thêm cho nhân viên chưa"). All-time mode:
+    const allTime = await getEmployeeFinancials(employeeAId);
+    expect(allTime.pagePurchaseCost).toBe(7_500_000n);
+    expect(allTime.totalCost).toBeGreaterThanOrEqual(7_500_000n);
+
+    // Month-scoped: attributed to the Page's actual purchase month (2026-02),
+    // NOT the (later) assignment effective-date month (2026-03) — matches the
+    // `purchaseMonth` assertion above, verified end-to-end this time.
+    const purchaseMonthFinancials = await getEmployeeFinancials(employeeAId, "2026-02");
+    expect(purchaseMonthFinancials.pagePurchaseCost).toBe(7_500_000n);
+
+    const assignmentMonthFinancials = await getEmployeeFinancials(employeeAId, "2026-03");
+    expect(assignmentMonthFinancials.pagePurchaseCost).toBe(0n);
   });
 
   it("does not create a PagePurchaseExpense when purchasePrice = 0", async () => {

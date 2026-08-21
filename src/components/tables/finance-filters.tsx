@@ -12,12 +12,14 @@ const ALL_SENTINEL = "all";
 
 type FinanceFiltersProps = {
   employeeOptions: FilterOption[];
-  pageOptions: FilterOption[];
+  /** Omit for Ads (no longer Page-scoped, user request 2026-08-20) — Revenue still passes this. */
+  pageOptions?: FilterOption[];
 };
 
 /**
- * Month/Employee/Page filter row, URL-synced (spec §13). Reused by Revenue
- * (Phase 5) and Ads (Phase 6) — same filter set per spec §18.
+ * Month/Employee(/Page) filter row, URL-synced (spec §13). Reused by Revenue
+ * (Phase 5, has Page filter) and Ads (Phase 6, Employee-only since
+ * 2026-08-20 — Ads no longer goes through a Page).
  *
  * Query param for the Page filter is named `pageId`, not `page` — spec §13's
  * example (`?month=...&employee=...&page=...`) collides with the existing
@@ -37,7 +39,7 @@ export function FinanceFilters({ employeeOptions, pageOptions }: FinanceFiltersP
   for (const option of employeeOptions) employeeLabels[option.id] = option.name;
 
   const pageLabels: Record<string, string> = { [ALL_SENTINEL]: "Tất cả Page" };
-  for (const option of pageOptions) pageLabels[option.id] = option.name;
+  for (const option of pageOptions ?? []) pageLabels[option.id] = option.name;
 
   function setParam(key: string, value: string | null) {
     const params = new URLSearchParams(searchParams.toString());
@@ -71,19 +73,21 @@ export function FinanceFilters({ employeeOptions, pageOptions }: FinanceFiltersP
           ))}
         </SelectContent>
       </Select>
-      <Select value={pageId} onValueChange={(value) => setParam("pageId", value)}>
-        <SelectTrigger className="h-9 rounded-lg">
-          <SelectValue>{(value: string | null) => (value ? (pageLabels[value] ?? value) : "Tất cả Page")}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_SENTINEL}>Tất cả Page</SelectItem>
-          {pageOptions.map((option) => (
-            <SelectItem key={option.id} value={option.id}>
-              {option.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {pageOptions ? (
+        <Select value={pageId} onValueChange={(value) => setParam("pageId", value)}>
+          <SelectTrigger className="h-9 rounded-lg">
+            <SelectValue>{(value: string | null) => (value ? (pageLabels[value] ?? value) : "Tất cả Page")}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_SENTINEL}>Tất cả Page</SelectItem>
+            {pageOptions.map((option) => (
+              <SelectItem key={option.id} value={option.id}>
+                {option.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
     </div>
   );
 }

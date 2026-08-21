@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { PageStatusPicker, type PageStatusPickerOption } from "@/components/forms/page-status-picker";
+import { PayoutPicker, type PayoutPickerOption } from "@/components/forms/payout-picker";
 import { updatePageStatusAction, type UpdatePageStatusState } from "@/server/actions/page.actions";
 import { UpdatePageStatusClientSchema, type UpdatePageStatusFormValues } from "@/server/validators/page.schema";
 
@@ -23,10 +24,13 @@ type EditPageStatusDialogProps = {
   pageId: string;
   defaultValues: UpdatePageStatusFormValues;
   statusOptions: PageStatusPickerOption[];
+  payoutOptions: PayoutPickerOption[];
 };
 
-/** User-role counterpart of `EditPageDialog` — only the "Trạng thái" field is editable (spec §12, user request 2026-08-18 "chỉ có thể edit được trạng thái thôi"). */
-export function EditPageStatusDialog({ pageId, defaultValues, statusOptions }: EditPageStatusDialogProps) {
+/** User-role counterpart of `EditPageDialog` — Trạng thái (spec §12, user request 2026-08-18
+ * "chỉ có thể edit được trạng thái thôi") + Payout (user request 2026-08-20, "áp dụng chọn
+ * payout cho page cả ở admin và nhân viên") are the only fields the Employee can self-edit. */
+export function EditPageStatusDialog({ pageId, defaultValues, statusOptions, payoutOptions }: EditPageStatusDialogProps) {
   const [open, setOpen] = useState(false);
   const [actionState, setActionState] = useState<UpdatePageStatusState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
@@ -64,14 +68,14 @@ export function EditPageStatusDialog({ pageId, defaultValues, statusOptions }: E
         render={
           <Button variant="outline" size="sm">
             <Pencil className="size-3.5" strokeWidth={2} />
-            Sửa trạng thái
+            Sửa trạng thái &amp; Payout
           </Button>
         }
       />
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Sửa trạng thái Page</DialogTitle>
-          <DialogDescription>Bạn chỉ có thể cập nhật trạng thái của Page mình đang phụ trách.</DialogDescription>
+          <DialogTitle>Sửa trạng thái &amp; Payout</DialogTitle>
+          <DialogDescription>Bạn chỉ có thể cập nhật trạng thái và payout của Page mình đang phụ trách.</DialogDescription>
         </DialogHeader>
 
         <form id="edit-page-status-form" onSubmit={handleSubmit(onSubmit)} className="space-y-stack-md">
@@ -80,6 +84,8 @@ export function EditPageStatusDialog({ pageId, defaultValues, statusOptions }: E
               {actionState.error}
             </div>
           ) : null}
+
+          <PayoutPicker idPrefix="user-edit-page" control={control} errors={errors} options={payoutOptions} />
 
           <PageStatusPicker idPrefix="user-edit-page" control={control} errors={errors} options={statusOptions} />
         </form>

@@ -68,6 +68,8 @@ export async function createPageAction(input: unknown): Promise<CreatePageState>
         purchaseMonth: monthKeyToDate(parsed.data.purchaseMonth),
         assignEmployeeId: parsed.data.assignEmployeeId,
         paidByAdminId: parsed.data.paidByAdminId,
+        sellerId: parsed.data.sellerId,
+        payoutId: parsed.data.payoutId,
         statusIds: parsed.data.statusIds,
         notes: parsed.data.notes,
       },

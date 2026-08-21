@@ -13,6 +13,8 @@ const statusTone: Record<string, StatusTone> = {
   INACTIVE: "neutral",
   ARCHIVED: "neutral",
   REVOKED: "error",
+  // PayoutStatus (user request 2026-08-20) — "đang hoạt động thì màu xanh, có vấn đề thì màu đỏ".
+  ISSUE: "error",
 };
 
 const statusLabel: Record<string, string> = {
@@ -20,6 +22,7 @@ const statusLabel: Record<string, string> = {
   INACTIVE: "Ngừng hoạt động",
   ARCHIVED: "Lưu trữ",
   REVOKED: "Đã thu hồi",
+  ISSUE: "Có vấn đề",
 };
 
 /** Small uppercase label per DESIGN.md "Status Chips". */

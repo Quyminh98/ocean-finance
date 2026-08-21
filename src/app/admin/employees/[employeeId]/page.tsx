@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Receipt, FileText, Megaphone, ExternalLink } from "lucide-react";
+import { Receipt, FileText, Megaphone, ExternalLink, IdCard } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SummaryStat } from "@/components/shared/summary-stat";
@@ -15,7 +15,7 @@ import { DeactivateEmployeeButton } from "@/components/forms/deactivate-employee
 import { SettleProfitButton } from "@/components/forms/settle-profit-button";
 import { MonthlyRevenueChart } from "@/components/dashboard/monthly-revenue-chart";
 import { formatVnd, REVENUE_TEXT_CLASS, EXPENSE_TEXT_CLASS, profitTextClass } from "@/lib/money";
-import { formatMonth } from "@/lib/dates";
+import { formatMonth, formatDate } from "@/lib/dates";
 import { getEmployeeDetail, getEmployeeFinancials, getEmployeeMonthlySeries } from "@/server/services/employee.service";
 import { getSalaryHistory } from "@/server/services/salary.service";
 import { listRevenue } from "@/server/services/revenue.service";
@@ -23,6 +23,7 @@ import { listAdExpenses } from "@/server/services/ads.service";
 import { listPagePurchaseExpensesByEmployee, listPagesByEmployee } from "@/server/services/page.service";
 import { listAdminOptions } from "@/server/services/user-account.service";
 import { listProfitSettlements } from "@/server/services/profit-settlement.service";
+import { listViasByHolder } from "@/server/services/via.service";
 
 type CostDetailRow = {
   key: string;
@@ -57,6 +58,7 @@ export default async function EmployeeDetailPage({
     pagePurchaseExpenses,
     adminOptions,
     profitSettlements,
+    vias,
   ] = await Promise.all([
     getSalaryHistory(employeeId),
     getEmployeeFinancials(employeeId),
@@ -67,6 +69,7 @@ export default async function EmployeeDetailPage({
     listPagePurchaseExpensesByEmployee(employeeId),
     listAdminOptions(),
     listProfitSettlements(employeeId),
+    listViasByHolder(employee.userId),
   ]);
   const currentSalaryRecord = salaryHistory.find((row) => row.effectiveTo === null) ?? null;
   const adminNameById = new Map(adminOptions.map((option) => [option.adminId, option.name]));
@@ -80,8 +83,8 @@ export default async function EmployeeDetailPage({
   const costDetailRows: CostDetailRow[] = [
     ...adExpenses.items.map((row) => ({
       key: `ads-${row.adExpenseId}`,
-      pageId: row.pageId,
-      pageName: row.pageName,
+      pageId: null,
+      pageName: null,
       type: "Ads" as const,
       sortDate: row.expenseMonth,
       monthLabel: formatMonth(row.expenseMonth.toISOString().slice(0, 7)),
@@ -186,6 +189,7 @@ export default async function EmployeeDetailPage({
           <TabsTrigger value="revenue">Doanh thu</TabsTrigger>
           <TabsTrigger value="costs">Chi phí</TabsTrigger>
           <TabsTrigger value="pages">Page</TabsTrigger>
+          <TabsTrigger value="via">Via</TabsTrigger>
           <TabsTrigger value="chart">Biểu đồ theo tháng</TabsTrigger>
         </TabsList>
 
@@ -315,6 +319,7 @@ export default async function EmployeeDetailPage({
                     <TableHead className="text-right font-label-caps text-label-caps text-on-surface-variant">Giá mua</TableHead>
                     <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Tháng mua</TableHead>
                     <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Trạng thái</TableHead>
+                    <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Payout</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -345,6 +350,62 @@ export default async function EmployeeDetailPage({
                       <TableCell>
                         <PageStatusChipList statuses={row.currentStatuses} />
                       </TableCell>
+                      <TableCell>
+                        {row.payout ? (
+                          <div className="flex items-center gap-stack-sm">
+                            <span className="text-on-surface-variant">{row.payout.name}</span>
+                            <StatusChip status={row.payout.status} />
+                          </div>
+                        ) : (
+                          <span className="text-on-surface-variant">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Read-only — nhân viên tự tạo/xoá via của chính mình ở "/user/vias"
+            (user request 2026-08-20 "ai tạo là người đó cầm"), Admin chỉ xem
+            lại tại đây để tra cứu, không có nút Tạo/Xoá. */}
+        <TabsContent value="via" className="pt-stack-md">
+          {vias.length === 0 ? (
+            <EmptyState icon={IdCard} title="Chưa có via" description="Via nhân viên này tự tạo sẽ hiển thị tại đây." />
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-container-lowest">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-surface-ice hover:bg-surface-ice">
+                    <TableHead className="w-12 font-label-caps text-label-caps text-on-surface-variant">STT</TableHead>
+                    <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Tên via</TableHead>
+                    <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Link</TableHead>
+                    <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Page</TableHead>
+                    <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Ngày tạo</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vias.map((via, index) => (
+                    <TableRow key={via.viaId} className="border-border-subtle">
+                      <TableCell className="font-data-tabular text-data-tabular text-on-surface-variant">{index + 1}</TableCell>
+                      <TableCell className="font-medium text-on-surface">{via.name}</TableCell>
+                      <TableCell>
+                        <a
+                          href={via.facebookUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-on-surface-variant hover:text-finance-blue"
+                        >
+                          <ExternalLink className="size-3.5" strokeWidth={2} />
+                          Mở link
+                        </a>
+                      </TableCell>
+                      <TableCell className="text-on-surface-variant">
+                        {via.pages.length === 0 ? "—" : via.pages.map((page) => page.name).join(", ")}
+                      </TableCell>
+                      <TableCell className="font-data-tabular text-data-tabular text-on-surface-variant">{formatDate(via.createdAt)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -65,7 +65,7 @@ afterAll(async () => {
 });
 
 describe("Transfer Page (spec §52 Integration Test Case 2 — Purchase price)", () => {
-  it("closes the old assignment, opens a new one, and never moves PagePurchaseExpense to the new owner", async () => {
+  it("closes the old assignment, opens a new one, and reassigns PagePurchaseExpense to the new owner", async () => {
     const created = await createPage(
       {
         name: `Test Page ${randomUUID()}`,
@@ -94,9 +94,12 @@ describe("Transfer Page (spec §52 Integration Test Case 2 — Purchase price)",
     expect(opened?.startedAt.toISOString().slice(0, 10)).toBe("2026-05-16");
     expect(opened?.endedAt).toBeNull();
 
-    // Case 2: A still owns the Page Purchase cost — B has 0.
+    // Case 2 (reversed 2026-08-21, user request "chi phí cũ thì lại chuyển sang cho người B"):
+    // B now owns the Page Purchase cost — A no longer does. Unlike Revenue, this is the one
+    // deliberate exception to the snapshot-never-moves rule (see CLAUDE.md).
     const purchaseExpense = await prisma.pagePurchaseExpense.findUnique({ where: { pageId: created.pageId } });
-    expect(purchaseExpense?.employeeIdSnapshot).toBe(employeeAId);
+    expect(purchaseExpense?.employeeIdSnapshot).toBe(employeeBId);
+    expect(purchaseExpense?.assignmentIdSnapshot).toBe(opened?.id);
     expect(purchaseExpense?.amount).toBe(5_000_000n);
 
     const audit = await prisma.auditLog.findFirst({

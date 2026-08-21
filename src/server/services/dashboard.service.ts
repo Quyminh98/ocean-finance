@@ -76,7 +76,7 @@ export async function getSystemFinancials(monthKey?: string): Promise<SystemFina
   const monthStart = monthKey ? parseMonthKey(monthKey) : null;
   if (monthKey && (!range || !monthStart)) throw new Error(`Invalid month key: ${monthKey}`);
 
-  const [receiptAgg, revenueAgg, adsAgg, purchaseAgg, adminExpenseAgg, salaryCost] = await Promise.all([
+  const [receiptAgg, revenueAgg, adsAgg, purchaseAgg, pendingPurchaseAgg, adminExpenseAgg, salaryCost] = await Promise.all([
     prisma.adminReceipt.aggregate({
       _sum: { amount: true },
       where: { deletedAt: null, ...(monthStart ? { receiptMonth: monthStart } : {}) },
@@ -93,6 +93,24 @@ export async function getSystemFinancials(monthKey?: string): Promise<SystemFina
       _sum: { amount: true },
       where: { deletedAt: null, ...(monthStart ? { purchaseMonth: monthStart } : {}) },
     }),
+    // Page has a purchase price + payer picked at creation time, but no
+    // PagePurchaseExpense yet because it hasn't been assigned to an employee
+    // (deferred by design — spec §5, `assignEmployee()` creates the real row
+    // once an owner exists). The Admin already owes/paid this regardless of
+    // assignment timing, so it must count now, not disappear until someone
+    // gets assigned (user report 2026-08-20 "page chưa gán thì bị chưa tính
+    // chi phí cho admin chi"). Once assigned, `purchaseExpense` stops being
+    // null and this page naturally drops out of this aggregate — no
+    // double-counting with `purchaseAgg` above.
+    prisma.page.aggregate({
+      _sum: { purchasePrice: true },
+      where: {
+        deletedAt: null,
+        purchasePrice: { gt: 0 },
+        purchaseExpense: null,
+        ...(monthStart ? { purchaseMonth: monthStart } : {}),
+      },
+    }),
     prisma.adminExpense.aggregate({
       _sum: { amount: true },
       where: { deletedAt: null, ...(range ? { expenseDate: { gte: range.gte, lt: range.lt } } : {}) },
@@ -103,7 +121,7 @@ export async function getSystemFinancials(monthKey?: string): Promise<SystemFina
   const totalReceived = receiptAgg._sum.amount ?? 0n;
   const totalPageRevenue = revenueAgg._sum.amount ?? 0n;
   const adsCost = adsAgg._sum.amount ?? 0n;
-  const pagePurchaseCost = purchaseAgg._sum.amount ?? 0n;
+  const pagePurchaseCost = (purchaseAgg._sum.amount ?? 0n) + (pendingPurchaseAgg._sum.purchasePrice ?? 0n);
   const adminExpenseCost = adminExpenseAgg._sum.amount ?? 0n;
   const totalExpenses = pagePurchaseCost + adsCost + salaryCost + adminExpenseCost;
 
@@ -234,7 +252,7 @@ export async function getAdminSpendingBreakdown(monthKey?: string): Promise<Admi
     orderBy: { name: "asc" },
   });
 
-  const [adsGroups, purchaseGroups, adminExpenseGroups, receiptGroups, salaryByAdmin] = await Promise.all([
+  const [adsGroups, purchaseGroups, pendingPurchaseGroups, adminExpenseGroups, receiptGroups, salaryByAdmin] = await Promise.all([
     prisma.adExpense.groupBy({
       by: ["paidByAdminId"],
       _sum: { amount: true },
@@ -244,6 +262,22 @@ export async function getAdminSpendingBreakdown(monthKey?: string): Promise<Admi
       by: ["paidByAdminId"],
       _sum: { amount: true },
       where: { deletedAt: null, ...(monthStart ? { purchaseMonth: monthStart } : {}) },
+    }),
+    // Pages with a price + payer but not yet assigned — see the matching
+    // comment in `getSystemFinancials` above (same fix, same reasoning,
+    // 2026-08-20). `paidByAdminId: { not: null }` is defensive (the service
+    // layer already requires it whenever purchasePrice > 0) but keeps the
+    // `groupBy` key non-null so `.get(admin.id)` below matches correctly.
+    prisma.page.groupBy({
+      by: ["paidByAdminId"],
+      _sum: { purchasePrice: true },
+      where: {
+        deletedAt: null,
+        purchasePrice: { gt: 0 },
+        purchaseExpense: null,
+        paidByAdminId: { not: null },
+        ...(monthStart ? { purchaseMonth: monthStart } : {}),
+      },
     }),
     prisma.adminExpense.groupBy({
       by: ["paidByAdminId"],
@@ -260,6 +294,10 @@ export async function getAdminSpendingBreakdown(monthKey?: string): Promise<Admi
 
   const adsByAdmin = new Map(adsGroups.map((row) => [row.paidByAdminId, row._sum.amount ?? 0n]));
   const purchaseByAdmin = new Map(purchaseGroups.map((row) => [row.paidByAdminId, row._sum.amount ?? 0n]));
+  for (const row of pendingPurchaseGroups) {
+    const adminId = row.paidByAdminId!;
+    purchaseByAdmin.set(adminId, (purchaseByAdmin.get(adminId) ?? 0n) + (row._sum.purchasePrice ?? 0n));
+  }
   const adminExpenseByAdmin = new Map(adminExpenseGroups.map((row) => [row.paidByAdminId, row._sum.amount ?? 0n]));
   const receivedByAdmin = new Map(receiptGroups.map((row) => [row.receivedByAdminId, row._sum.amount ?? 0n]));
 
@@ -345,7 +383,7 @@ export async function getRecentActivity(params: RecentActivityParams = {}): Prom
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
       take: fetchCount,
-      include: { page: { select: { name: true } } },
+      include: { employee: { include: { user: { select: { name: true } } } } },
     }),
     prisma.page.findMany({
       where: { deletedAt: null },
@@ -403,7 +441,7 @@ export async function getRecentActivity(params: RecentActivityParams = {}): Prom
     ...ads.map((row) => ({
       id: `ads-${row.id}`,
       type: "ADS" as const,
-      message: `Chi phí Ads mới ${formatVnd(row.amount)} cho Page "${row.page.name}"`,
+      message: `Chi phí Ads mới ${formatVnd(row.amount)} cho nhân viên "${row.employee.user.name}"`,
       occurredAt: row.createdAt,
     })),
     ...newPages.map((row) => ({

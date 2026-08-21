@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Megaphone } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -12,11 +11,10 @@ import { DeleteAdExpenseButton } from "@/components/forms/delete-ad-expense-butt
 import { formatVnd, EXPENSE_TEXT_CLASS } from "@/lib/money";
 import { formatMonth } from "@/lib/dates";
 import { listAdExpenses, AD_EXPENSE_PAGE_SIZE_OPTIONS, type AdExpensePageSize } from "@/server/services/ads.service";
-import { listPageOptions } from "@/server/services/page.service";
 import { listEmployeeOptions } from "@/server/services/employee.service";
 import { listAdminOptions } from "@/server/services/user-account.service";
 
-type AdsSearchParams = { q?: string; page?: string; pageSize?: string; month?: string; employee?: string; pageId?: string };
+type AdsSearchParams = { q?: string; page?: string; pageSize?: string; month?: string; employee?: string };
 
 export default async function AdsPage({
   searchParams,
@@ -30,26 +28,25 @@ export default async function AdsPage({
     ? (pageSizeCandidate as AdExpensePageSize)
     : 20;
 
-  const [{ items, total }, pageOptions, employeeOptions, adminOptions] = await Promise.all([
-    listAdExpenses({ search: params.q, month: params.month, employeeId: params.employee, pageId: params.pageId, page, pageSize }),
-    listPageOptions(),
+  const [{ items, total }, employeeOptions, adminOptions] = await Promise.all([
+    listAdExpenses({ search: params.q, month: params.month, employeeId: params.employee, page, pageSize }),
     listEmployeeOptions(),
     listAdminOptions(),
   ]);
 
-  const hasActiveFilter = Boolean(params.q || params.month || params.employee || params.pageId);
+  const hasActiveFilter = Boolean(params.q || params.month || params.employee);
 
   return (
     <div>
       <PageHeader
         title="Quản lý Ads"
-        description="Theo dõi và ghi nhận chi phí Ads theo Page. Nhân viên phụ trách được tự động xác định."
-        action={<CreateAdExpenseDialog pageOptions={pageOptions} adminOptions={adminOptions} />}
+        description="Theo dõi và ghi nhận chi phí Ads theo nhân viên."
+        action={<CreateAdExpenseDialog employeeOptions={employeeOptions} adminOptions={adminOptions} />}
       />
 
       <div className="mb-stack-md flex flex-wrap items-center justify-between gap-stack-sm">
-        <SearchInput placeholder="Tìm theo tên Page hoặc ghi chú..." />
-        <FinanceFilters employeeOptions={employeeOptions.map((e) => ({ id: e.employeeId, name: e.name }))} pageOptions={pageOptions.map((p) => ({ id: p.pageId, name: p.name }))} />
+        <SearchInput placeholder="Tìm theo tên nhân viên hoặc ghi chú..." />
+        <FinanceFilters employeeOptions={employeeOptions.map((e) => ({ id: e.employeeId, name: e.name }))} />
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-container-lowest">
@@ -65,7 +62,6 @@ export default async function AdsPage({
               <TableHeader>
                 <TableRow className="bg-surface-ice hover:bg-surface-ice">
                   <TableHead className="w-12 font-label-caps text-label-caps text-on-surface-variant">STT</TableHead>
-                  <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Page</TableHead>
                   <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Nhân viên</TableHead>
                   <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Tháng</TableHead>
                   <TableHead className="text-right font-label-caps text-label-caps text-on-surface-variant">Số tiền</TableHead>
@@ -78,12 +74,7 @@ export default async function AdsPage({
                 {items.map((row, index) => (
                   <TableRow key={row.adExpenseId} className="border-border-subtle">
                     <TableCell className="font-data-tabular text-data-tabular text-on-surface-variant">{(page - 1) * pageSize + index + 1}</TableCell>
-                    <TableCell>
-                      <Link href={`/admin/pages/${row.pageId}`} className="font-medium text-on-surface hover:text-finance-blue">
-                        {row.pageName}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-on-surface-variant">{row.employeeName}</TableCell>
+                    <TableCell className="font-medium text-on-surface">{row.employeeName}</TableCell>
                     <TableCell className="font-data-tabular text-data-tabular text-on-surface-variant">{formatMonth(row.expenseMonth.toISOString().slice(0, 7))}</TableCell>
                     <TableCell className={`text-right font-data-tabular text-data-tabular ${EXPENSE_TEXT_CLASS}`}>{formatVnd(row.amount)}</TableCell>
                     <TableCell className="font-medium text-on-surface">{row.paidByAdminName}</TableCell>
@@ -92,17 +83,17 @@ export default async function AdsPage({
                       <div className="flex items-center justify-end gap-stack-sm">
                         <EditAdExpenseDialog
                           adExpenseId={row.adExpenseId}
-                          pageOptions={pageOptions}
+                          employeeOptions={employeeOptions}
                           adminOptions={adminOptions}
                           defaultValues={{
-                            pageId: row.pageId,
+                            employeeId: row.employeeId,
                             expenseMonth: row.expenseMonth.toISOString().slice(0, 7),
                             amount: row.amount.toString(),
                             note: row.note ?? "",
                             paidByAdminId: row.paidByAdminId,
                           }}
                         />
-                        <DeleteAdExpenseButton adExpenseId={row.adExpenseId} pageId={row.pageId} />
+                        <DeleteAdExpenseButton adExpenseId={row.adExpenseId} employeeId={row.employeeId} />
                       </div>
                     </TableCell>
                   </TableRow>

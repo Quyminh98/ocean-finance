@@ -9,19 +9,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/forms/field";
 import { PageStatusPicker, type PageStatusPickerOption } from "@/components/forms/page-status-picker";
+import { PayoutPicker, type PayoutPickerOption } from "@/components/forms/payout-picker";
 import { createSystemPageForSelfAction, type CreateSystemPageSelfState } from "@/server/actions/page.actions";
 import { CreateSystemPageSelfClientSchema, type CreateSystemPageSelfFormValues } from "@/server/validators/page.schema";
 
 type CreateSystemPageFormProps = {
   statusOptions: PageStatusPickerOption[];
+  payouts: PayoutPickerOption[];
 };
 
 /**
  * User self-service Create — always Page hệ thống, auto-assigned to the
  * caller. No price/payer/employee picker (unlike CreatePageForm, Admin-only)
- * since those never apply to this type/flow.
+ * since those never apply to this type/flow — Payout stays available though
+ * (user request 2026-08-20, "áp dụng chọn payout cho page cả ở admin và nhân viên").
  */
-export function CreateSystemPageForm({ statusOptions }: CreateSystemPageFormProps) {
+export function CreateSystemPageForm({ statusOptions, payouts }: CreateSystemPageFormProps) {
   const router = useRouter();
   const [state, setState] = useState<CreateSystemPageSelfState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
@@ -33,7 +36,7 @@ export function CreateSystemPageForm({ statusOptions }: CreateSystemPageFormProp
     formState: { errors },
   } = useForm<CreateSystemPageSelfFormValues>({
     resolver: zodResolver(CreateSystemPageSelfClientSchema),
-    defaultValues: { name: "", facebookUrl: "", statusIds: [], notes: "" },
+    defaultValues: { name: "", facebookUrl: "", payoutId: "", statusIds: [], notes: "" },
   });
 
   function onSubmit(values: CreateSystemPageSelfFormValues) {
@@ -71,6 +74,8 @@ export function CreateSystemPageForm({ statusOptions }: CreateSystemPageFormProp
           className="h-10 rounded-lg"
         />
       </Field>
+
+      <PayoutPicker idPrefix="create-system-page" control={control} errors={errors} options={payouts} />
 
       <PageStatusPicker idPrefix="create-system-page" control={control} errors={errors} options={statusOptions} />
 

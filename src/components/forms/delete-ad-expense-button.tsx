@@ -7,10 +7,10 @@ import { deleteAdExpenseAction } from "@/server/actions/ads.actions";
 
 type DeleteAdExpenseButtonProps = {
   adExpenseId: string;
-  pageId: string;
+  employeeId: string;
 };
 
-export function DeleteAdExpenseButton({ adExpenseId, pageId }: DeleteAdExpenseButtonProps) {
+export function DeleteAdExpenseButton({ adExpenseId, employeeId }: DeleteAdExpenseButtonProps) {
   return (
     <ConfirmDialog
       trigger={
@@ -22,7 +22,7 @@ export function DeleteAdExpenseButton({ adExpenseId, pageId }: DeleteAdExpenseBu
       title="Xoá chi phí Ads"
       description="Bản ghi sẽ bị ẩn khỏi danh sách nhưng vẫn được lưu (soft delete), không mất dữ liệu."
       confirmLabel="Xoá"
-      onConfirm={() => deleteAdExpenseAction(adExpenseId, pageId)}
+      onConfirm={() => deleteAdExpenseAction(adExpenseId, employeeId)}
     />
   );
 }

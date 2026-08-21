@@ -48,6 +48,14 @@ enum PageStatusColor {
   PINK
 }
 
+/// Fixed 2-value status for Payout (user request 2026-08-20) — not a
+/// user-defined picklist like PageStatusColor, so no separate options table.
+/// ACTIVE = green, ISSUE = red.
+enum PayoutStatus {
+  ACTIVE
+  ISSUE
+}
+
 enum AuditActorType {
   USER
   MCP
@@ -91,6 +99,7 @@ model User {
   receivedAdminReceipts       AdminReceipt[]             @relation("AdminReceiptReceivedByAdmin")
   createdEmployeeReceipts     EmployeeReceipt[]          @relation("EmployeeReceiptCreatedByAdmin")
   createdProfitSettlements    EmployeeProfitSettlement[] @relation("EmployeeProfitSettlementCreatedByAdmin")
+  heldVias                    Via[]                      @relation("ViaHolder")
   createdMcpClients           McpClient[]                @relation("McpClientCreatedByAdmin")
   auditLogs                   AuditLog[]                 @relation("AuditLogActorUser")
 
@@ -110,7 +119,7 @@ model EmployeeProfile {
   salaryHistories              SalaryHistory[]
   pageAssignments              PageAssignment[]
   revenueSnapshots             Revenue[]
-  adExpenseSnapshots           AdExpense[]
+  adExpenses                   AdExpense[]
   pagePurchaseExpenseSnapshots PagePurchaseExpense[]
   employeeReceipts             EmployeeReceipt[]
   profitSettlements            EmployeeProfitSettlement[]
@@ -159,22 +168,38 @@ model Page {
   /// creation whenever purchasePrice > 0, even if no employee is assigned yet
   /// (assignEmployee reuses this instead of asking again). Null when purchasePrice = 0.
   paidByAdminId    String?   @map("paid_by_admin_id") @db.Uuid
+  /// Người bán — FK → Seller, optional (user request 2026-08-20). Only ever
+  /// set for pageType=BKT (create form only shows the picker for BKT); a
+  /// deleted Seller falls back to null here via ON DELETE SET NULL, never
+  /// takes the Page down with it.
+  sellerId         String?   @map("seller_id") @db.Uuid
+  /// Payout/bank account — FK → Payout, optional (user request 2026-08-20).
+  /// Unlike sellerId (Admin-only, create-time-only, BKT-only), this is
+  /// editable after creation and settable by BOTH Admin (any Page) and the
+  /// Employee currently managing the Page (self-service, no type restriction).
+  payoutId         String?   @map("payout_id") @db.Uuid
   notes            String?
   createdByAdminId String    @map("created_by_admin_id") @db.Uuid
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
 
-  createdByAdmin User  @relation("PageCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  paidByAdmin    User? @relation("PagePaidByAdmin", fields: [paidByAdminId], references: [id])
+  createdByAdmin User    @relation("PageCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin    User?   @relation("PagePaidByAdmin", fields: [paidByAdminId], references: [id])
+  seller         Seller? @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  payout         Payout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
 
   assignments       PageAssignment[]
   revenues          Revenue[]
-  adExpenses        AdExpense[]
   purchaseExpense   PagePurchaseExpense?
   /// Many-to-many with PageStatusOption (user request 2026-08-18 — "chọn
   /// nhiều trạng thái được", replaces the single nullable `status_id` FK).
   statusAssignments PageStatusAssignment[]
+  /// Many-to-many with Via (user request 2026-08-20 — "1 page ở nhiều via
+  /// được không, tôi muốn thế"). Attached from the Via side (Create/Edit Via
+  /// picks which Page(s) it's used for), not restricted to Pages the via's
+  /// holder manages.
+  viaAssignments    PageViaAssignment[]
 
   @@map("pages")
 }
@@ -217,6 +242,95 @@ model PageStatusOption {
   @@map("page_status_options")
 }
 
+/// Managed picklist for Page.sellerId (user request 2026-08-20 — Admin
+/// defines sellers once under Cài đặt → "Người bán", Page create form just
+/// picks from the list instead of free-typing a name each time). Pure
+/// display/reference metadata, not financial data, so — same as
+/// PageStatusOption — deletion here is a real hard delete; Pages currently
+/// referencing a deleted Seller fall back to sellerId = null automatically
+/// (`ON DELETE SET NULL` on Page.sellerId) rather than losing the Page.
+model Seller {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  pages Page[]
+
+  @@map("sellers")
+}
+
+/// Managed picklist for Page.payoutId (user request 2026-08-20 — "tab
+/// payout ở admin"). Admin-managed via Cài đặt → "Payout" — bank
+/// account/payout channel + its status, reused across Pages. Unlike Seller,
+/// this stays editable after Page creation and can be set by BOTH Admin
+/// (any Page) and the Employee currently managing a given Page. Pure
+/// reference/status metadata, not financial data — hard delete like Seller,
+/// Pages referencing a deleted Payout fall back to payoutId = null
+/// (`ON DELETE SET NULL`) rather than losing the Page.
+model Payout {
+  id        String       @id @default(uuid()) @db.Uuid
+  /// "Tên payout" — the identifying label shown in PayoutPicker and everywhere a Page's
+  /// payout is displayed (user request 2026-08-21). Distinct from bankName, which stays
+  /// as the underlying bank account detail.
+  name      String
+  bankName  String       @map("bank_name")
+  status    PayoutStatus @default(ACTIVE)
+  note      String?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  pages Page[]
+
+  @@map("payouts")
+}
+
+/// A "via" (Facebook virtual/secondary account) held by an Employee or Admin
+/// (user request 2026-08-20 — "ai tạo là người đó cầm": the creator is
+/// always the holder, self-service for both roles, no picker). `holderUserId`
+/// is a plain FK → User (works for either role, no separate identity table)
+/// and is never client-supplied — always resolved from the caller's own
+/// session at creation time (see `createVia()`). Pure account-management
+/// metadata, not financial data, so — same as Seller/PageStatusOption —
+/// deletion here is a real hard delete, restricted to the holder themselves.
+model Via {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  facebookUrl  String   @map("facebook_url")
+  holderUserId String   @map("holder_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  holder User @relation("ViaHolder", fields: [holderUserId], references: [id])
+
+  /// Many-to-many with Page (user request 2026-08-20 — a Via can be reused
+  /// across multiple Pages, and a Page can use multiple Via at once).
+  pageAssignments PageViaAssignment[]
+
+  @@map("vias")
+}
+
+/// Join table for Page <-> Via (user request 2026-08-20 — "1 page ở nhiều
+/// via được không, tôi muốn thế"). Explicit table (not Prisma's implicit
+/// M2M) to keep a real UUID PK + created_at, consistent with every other
+/// table in this schema (see Conventions) — same reasoning as
+/// PageStatusAssignment. Attachment is managed from the Via side (Create/Edit
+/// Via picks which Page(s) it applies to); no restriction on which Page a
+/// Via can be attached to (confirmed via AskUserQuestion — any Page, not just
+/// ones the via's holder manages).
+model PageViaAssignment {
+  id        String   @id @default(uuid()) @db.Uuid
+  pageId    String   @map("page_id") @db.Uuid
+  viaId     String   @map("via_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  via  Via  @relation(fields: [viaId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, viaId], map: "page_via_assignments_unique")
+  @@map("page_via_assignments")
+}
+
 /// Source of truth for "which employee owns this Page, and when".
 /// At most one active (endedAt IS NULL) assignment per page.
 model PageAssignment {
@@ -234,7 +348,6 @@ model PageAssignment {
   assignedByAdmin User            @relation("AssignmentCreatedByAdmin", fields: [assignedByAdminId], references: [id])
 
   revenues        Revenue[]
-  adExpenses      AdExpense[]
   purchaseExpense PagePurchaseExpense?
 
   @@unique([pageId], map: "page_assignment_one_active_per_page", where: raw("ended_at IS NULL"))
@@ -274,34 +387,34 @@ model Revenue {
   @@map("revenues")
 }
 
-/// Ads expense for a Page — same snapshot pattern as Revenue, but tracked
-/// per calendar month (not per day): `expenseMonth` is always normalized to
-/// the 1st of the month, and `ad_expenses_page_month_unique` below (partial
-/// unique index via the `partialIndexes` preview feature, same pattern as
-/// SalaryHistory/PageAssignment) enforces at most one active record per
-/// Page per month. Owner resolves against the 1st of the month, so a
-/// mid-month transfer does not split a single month's Ads cost.
+/// Ads expense for an employee directly — NOT tied to a Page (user request
+/// 2026-08-20, reverses the earlier Page-scoped design: "ads đang tính theo
+/// page, hãy sửa cho tôi là ads tính theo nhân viên"). Tracked per calendar
+/// month: `expenseMonth` always normalized to the 1st of the month,
+/// `ad_expenses_employee_month_unique` below (partial unique index via the
+/// `partialIndexes` preview feature, same pattern as SalaryHistory/
+/// PageAssignment) enforces at most one active record per Employee per
+/// month — re-keyed 1:1 from the old per-Page constraint. No snapshot
+/// fields/Page/PageAssignment relation anymore: `employeeId` is a direct,
+/// Admin-chosen value (same shape as EmployeeReceipt), not resolved via
+/// resolvePageOwner().
 model AdExpense {
-  id                   String    @id @default(uuid()) @db.Uuid
-  pageId               String    @map("page_id") @db.Uuid
-  employeeIdSnapshot   String    @map("employee_id_snapshot") @db.Uuid
-  assignmentIdSnapshot String    @map("assignment_id_snapshot") @db.Uuid
-  expenseMonth         DateTime  @map("expense_month") @db.Date
-  amount               BigInt
-  note                 String?
-  createdByAdminId     String    @map("created_by_admin_id") @db.Uuid
-  paidByAdminId        String    @map("paid_by_admin_id") @db.Uuid
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  expenseMonth     DateTime  @map("expense_month") @db.Date
+  amount           BigInt
+  note             String?
+  createdByAdminId String    @map("created_by_admin_id") @db.Uuid
+  paidByAdminId    String    @map("paid_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
 
-  page               Page            @relation(fields: [pageId], references: [id])
-  employeeSnapshot   EmployeeProfile @relation(fields: [employeeIdSnapshot], references: [id])
-  assignmentSnapshot PageAssignment  @relation(fields: [assignmentIdSnapshot], references: [id])
-  createdByAdmin     User            @relation("AdExpenseCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  paidByAdmin        User            @relation("AdExpensePaidByAdmin", fields: [paidByAdminId], references: [id])
+  employee       EmployeeProfile @relation(fields: [employeeId], references: [id])
+  createdByAdmin User            @relation("AdExpenseCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  paidByAdmin    User            @relation("AdExpensePaidByAdmin", fields: [paidByAdminId], references: [id])
 
-  @@unique([pageId, expenseMonth], map: "ad_expenses_page_month_unique", where: raw("deleted_at IS NULL"))
+  @@unique([employeeId, expenseMonth], map: "ad_expenses_employee_month_unique", where: raw("deleted_at IS NULL"))
   @@map("ad_expenses")
 }
 

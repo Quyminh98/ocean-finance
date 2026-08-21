@@ -17,33 +17,33 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Combobox } from "@/components/ui/combobox";
 import { Field } from "@/components/forms/field";
 import { createAdExpenseAction, type CreateAdExpenseState } from "@/server/actions/ads.actions";
 import { CreateAdExpenseClientSchema, type CreateAdExpenseFormValues } from "@/server/validators/ads.schema";
-import type { PageOption } from "@/server/services/page.service";
+import type { EmployeeOption } from "@/server/services/employee.service";
 import type { AdminOption } from "@/server/services/user-account.service";
 import { currentMonthKey } from "@/lib/dates";
 
 type CreateAdExpenseDialogProps = {
-  pageOptions: PageOption[];
+  employeeOptions: EmployeeOption[];
   adminOptions: AdminOption[];
-  /** Preselect + lock the Page field (used when creating from a Page Detail tab). */
-  fixedPageId?: string;
+  /** Preselect + lock the Employee field (used when creating from an Employee Detail tab). */
+  fixedEmployeeId?: string;
 };
 
-export function CreateAdExpenseDialog({ pageOptions, adminOptions, fixedPageId }: CreateAdExpenseDialogProps) {
+export function CreateAdExpenseDialog({ employeeOptions, adminOptions, fixedEmployeeId }: CreateAdExpenseDialogProps) {
   const [open, setOpen] = useState(false);
   const [actionState, setActionState] = useState<CreateAdExpenseState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
 
-  const pageComboOptions = pageOptions.map((option) => ({ value: option.pageId, label: option.name }));
+  const employeeLabels: Record<string, string> = {};
+  for (const option of employeeOptions) employeeLabels[option.employeeId] = option.name;
 
   const adminLabels: Record<string, string> = {};
   for (const option of adminOptions) adminLabels[option.adminId] = option.name;
 
   const defaultValues: CreateAdExpenseFormValues = {
-    pageId: fixedPageId ?? "",
+    employeeId: fixedEmployeeId ?? "",
     expenseMonth: currentMonthKey(),
     amount: "",
     note: "",
@@ -91,9 +91,7 @@ export function CreateAdExpenseDialog({ pageOptions, adminOptions, fixedPageId }
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Thêm chi phí Ads</DialogTitle>
-          <DialogDescription>
-            Chi phí Ads tính theo tháng — nhân viên phụ trách được hệ thống tự xác định theo nhân viên quản lý Page vào đầu tháng đó.
-          </DialogDescription>
+          <DialogDescription>Chi phí Ads tính theo tháng, nhập trực tiếp cho nhân viên.</DialogDescription>
         </DialogHeader>
 
         <form id="create-ad-expense-form" onSubmit={handleSubmit(onSubmit)} className="space-y-stack-md">
@@ -103,27 +101,30 @@ export function CreateAdExpenseDialog({ pageOptions, adminOptions, fixedPageId }
             </div>
           ) : null}
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Mỗi Page chỉ có một dòng chi phí Ads cho mỗi tháng — nhập lại cho tháng đã có sẽ cập nhật số tiền của tháng đó.
+            Mỗi nhân viên chỉ có một dòng chi phí Ads cho mỗi tháng — nhập lại cho tháng đã có sẽ cập nhật số tiền của tháng đó.
           </p>
 
           <Field
-            label="Page"
-            htmlFor="ad-expense-pageId"
-            error={errors.pageId?.message ?? (actionState?.status === "error" ? actionState.fieldErrors?.pageId : undefined)}
+            label="Nhân viên"
+            htmlFor="ad-expense-employeeId"
+            error={errors.employeeId?.message ?? (actionState?.status === "error" ? actionState.fieldErrors?.employeeId : undefined)}
           >
             <Controller
               control={control}
-              name="pageId"
+              name="employeeId"
               render={({ field }) => (
-                <Combobox
-                  id="ad-expense-pageId"
-                  options={pageComboOptions}
-                  value={field.value}
-                  onValueChange={field.onChange}
-                  disabled={Boolean(fixedPageId)}
-                  placeholder="Tìm Page..."
-                  emptyText="Không tìm thấy Page."
-                />
+                <Select value={field.value} onValueChange={field.onChange} disabled={Boolean(fixedEmployeeId)}>
+                  <SelectTrigger id="ad-expense-employeeId" className="h-10 w-full rounded-lg">
+                    <SelectValue>{(value: string) => employeeLabels[value] ?? "Chọn nhân viên..."}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {employeeOptions.map((option) => (
+                      <SelectItem key={option.employeeId} value={option.employeeId}>
+                        {option.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             />
           </Field>

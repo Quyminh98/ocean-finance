@@ -410,7 +410,7 @@ export async function getEmployeeFinancials(employeeId: string, monthKey?: strin
     prisma.adExpense.aggregate({
       _sum: { amount: true },
       where: {
-        employeeIdSnapshot: employeeId,
+        employeeId,
         deletedAt: null,
         ...(monthStart ? { expenseMonth: monthStart } : {}),
       },

@@ -191,7 +191,12 @@ Kết quả:
 
 # 6. Quy tắc Ads
 
-> **Cập nhật (Phase 6, xác nhận với user 2026-08-17):** Ads tính **theo tháng**, không theo ngày cụ thể như mô tả gốc bên dưới — xem 3 đoạn "Cập nhật" chèn trong mục này. `context/schema.md` (entity AdExpense + Changelog Phase 6) và migration `20260817140000_ads_expense_monthly` đã đồng bộ theo thay đổi này.
+> **Cập nhật ngày 2026-08-20 (ĐẢO NGƯỢC hoàn toàn — user request "Hiện tại ads đang tính theo page, hãy sửa cho tôi là ads tính theo nhân viên thay vì page"):** câu mở đầu "Ads được nhập theo Page, không nhập trực tiếp theo nhân viên" ngay dưới đây **không còn đúng** — toàn bộ mục 6 gốc bên dưới (kể cả các "Cập nhật" Phase 6 lồng trong) chỉ còn giá trị lịch sử. Quy tắc mới, xác nhận qua `AskUserQuestion` (2 câu hỏi):
+> - Ads nhập **trực tiếp theo Nhân viên**, không còn chọn Page — form chỉ còn Nhân viên/Tháng/Số tiền/Người chi/Ghi chú.
+> - Ràng buộc unique đổi từ `(page_id, expense_month)` sang **`(employee_id, expense_month)`** — mỗi nhân viên tối đa 1 record Ads đang hoạt động/tháng, nhập lại ghi đè (giữ nguyên cơ chế upsert-overwrite).
+> - Bỏ hẳn `page_id`/`employee_id_snapshot`/`assignment_id_snapshot` khỏi `AdExpense` — không còn `resolvePageOwner()` nào được gọi cho Ads (khác Revenue, vẫn giữ nguyên cơ chế Page-centric cũ). `employee_id` là lựa chọn trực tiếp của Admin, không phải snapshot tự resolve.
+> - Tab "Ads" trên Page Detail **bỏ hẳn** (Ads không còn thuộc về một Page cụ thể nào để hiển thị ở đó). Trang `/admin/ads` (List trung tâm) và bảng "Chi tiết chi phí" ở Employee Detail/`/user/costs` vẫn còn, chỉ đổi cột "Page" → không còn, chỉ còn Nhân viên/Tháng/Số tiền/Người chi/Ghi chú.
+> - Migration `20260820110155_ads_track_by_employee`. Chi tiết đầy đủ: `context/schema.md` entity `AdExpense` + Changelog, `context/plan.md` Phase 17.2.
 
 Ads được nhập **theo Page**, không nhập trực tiếp theo nhân viên.
 
@@ -334,6 +339,8 @@ Lưu ý:
 `Page Revenue` và `Admin Received` là hai số khác nhau.
 
 **Cập nhật (Phase 11, đã implement — mục 10.3–10.5):** hàm trung tâm `getSystemFinancials(monthKey)` (`dashboard.service.ts`) tính cả 3 công thức trên trong một lần gọi, luôn scope theo một tháng cụ thể (không có chế độ all-time như Employee Cost ở mục 10.2 — xem mục 11.1). Salary trong `Total Expenses` ở đây là **tổng lương toàn hệ thống** (mọi nhân viên cộng lại), khác `Employee Cost` ở mục 10.2 vốn tính riêng cho một nhân viên — chi tiết cơ chế tính ở mục 37 "Salary".
+
+**Cập nhật ngày 2026-08-20 (fix bug — user report "page chưa gán thì bị chưa tính chi phí cho admin chi"):** `Page Purchase` trong `Total Expenses` ở trên (và field tương ứng trong bảng "Chi phí & Tiền đã nhận theo Admin", mục 11.1) trước đó chỉ cộng từ bảng `PagePurchaseExpense` — nhưng theo mục 5 (Quy tắc chi phí mua Page), record này **chỉ được tạo khi Page có nhân viên đầu tiên** (lúc tạo Page nếu gán ngay, hoặc muộn hơn qua `assignEmployee()`). Một Page có giá mua + đã chọn Người chi nhưng **chưa gán ai** thì hoàn toàn không có `PagePurchaseExpense` nào — khiến khoản này biến mất khỏi cả Tổng chi phí hệ thống lẫn bảng theo Admin cho tới khi có người được gán, dù Admin coi như đã ghi nhận nghĩa vụ chi ngay từ lúc tạo Page. **Không đổi business rule ở mục 5** (vẫn chỉ tạo `PagePurchaseExpense` thật khi có nhân viên, vì phía nhân viên chưa có ai để snapshot) — chỉ sửa tầng tổng hợp báo cáo: `getSystemFinancials()`/`getAdminSpendingBreakdown()` (`dashboard.service.ts`) giờ cộng thêm truy vấn phụ trên chính bảng `Page` (`purchasePrice > 0 AND purchaseExpense IS NULL`, tức Page có giá mua nhưng chưa có `PagePurchaseExpense`), group theo `paid_by_admin_id`. Khi Page được gán (assignEmployee tạo `PagePurchaseExpense` thật), Page đó tự động rơi khỏi truy vấn phụ này và chuyển sang được tính từ `PagePurchaseExpense` như cũ — không đếm trùng.
 
 ---
 
@@ -613,6 +620,8 @@ Fields:
 
 **Cập nhật ngày 2026-08-18 (theo yêu cầu user "filter theo tên page, loại, trạng thái và nhân viên phụ trách"): thêm 3 dropdown filter (Loại Page/Trạng thái/Nhân viên phụ trách) cạnh Search theo tên đã có sẵn, URL-synced (`?pageType=&statusId=&employeeId=`, xem mục 13).** Không đổi schema — `listPages()` (`page.service.ts`) thêm 3 param lọc tương ứng, kết hợp AND với nhau và với `search`. Nhân viên phụ trách filter dùng **toàn bộ** danh sách nhân viên (`listEmployeeOptions()`, không chỉ `ACTIVE`) để vẫn khớp đúng trường hợp owner hiện tại của một Page đã bị deactivate sau khi gán.
 
+**Cập nhật ngày 2026-08-20 (đảo lại "không bắt buộc vào Page Detail" ở trên — user báo bug "khi tạo page mà chưa gán, khi muốn gán page cho nhân viên thì lại ko có phần gán", sau khi làm rõ qua `AskUserQuestion` là thiếu ở cả List lẫn Detail):** cột "Thao tác" ở Page List thực ra **chưa từng có** nút Gán/Chuyển giao (đúng như câu gốc "Edit, Delete" liệt kê ở trên) — chỉ Page Detail (mục 16) mới có `AssignEmployeeDialog`/`TransferPageDialog`, khiến user phải click vào từng Page mới gán được, không thấy được ngay từ danh sách. Đã thêm 2 dialog đó (tái dùng nguyên component, không viết logic mới) vào cột "Thao tác" của Page List, ngay cạnh Sửa — cùng logic điều kiện với Detail: Page chưa có ai phụ trách → "Gán nhân viên", đã có → "Chuyển giao". `PageListItem` (`page.service.ts`) thêm field `currentEmployeeId` (trước đó chỉ có `currentEmployeeName`, không đủ để loại nhân viên hiện tại khỏi danh sách candidate khi Chuyển giao) — cập nhật cả `listPages()` lẫn `listPagesByEmployee()` (dùng chung type) để field mới luôn có giá trị.
+
 ## 15.2 Create Page
 
 Fields bắt buộc:
@@ -641,6 +650,8 @@ Transaction:
 Toàn bộ phải chạy trong một database transaction.
 
 **Cập nhật ngày 2026-08-18 (theo yêu cầu user "thêm field là page hệ thống hoặc page bkt, page hệ thống thì không cần giá mua"): thêm field `page_type` (`SYSTEM | BKT`) — CÓ thay đổi schema thật, xem `context/schema.md` Changelog.** Xác nhận qua `AskUserQuestion`: (1) **Page hệ thống** (`SYSTEM`) không có giá mua — `purchase_price` luôn `0`, không hỏi "Người chi", không bao giờ tạo `PagePurchaseExpense`; (2) **Page BKT** (`BKT`, mặc định) giữ nguyên y hệt flow trả phí đã có ở trên (Purchase Price/Purchase Date/Người chi khi có giá); (3) chỉ **Admin** tạo được Page BKT qua `/admin/pages/new` (form thêm Select "Loại Page", chọn `SYSTEM` sẽ ẩn hẳn 2 field Giá mua/Người chi, ép về 0); Page hệ thống còn tạo được qua đường User self-service riêng (mục 12 "Cập nhật... User tự thêm Page hệ thống" ngay dưới). Service layer: `createPage()` reject (`SYSTEM_PAGE_NO_PRICE`) nếu `pageType=SYSTEM` mà `purchasePrice > 0`; `pageType` optional ở tầng service (default `BKT`) — cùng lý do đã áp dụng cho `statusColor` trước đó (hàng chục test gọi `createPage()` trực tiếp, không sửa lại toàn bộ chỉ vì thêm 1 field).
+
+**Cập nhật ngày 2026-08-20 (theo yêu cầu user "thêm field nhập người bán vào khi tạo page bkt, người bán có thể add thêm, và khi tạo page thì chọn người bán"): thêm field optional "Người bán" (`seller_id`) — CÓ thay đổi schema thật, thêm entity mới `Seller`, xem `context/schema.md` Changelog.** Người bán là một picklist quản lý tập trung ở Cài đặt → "Người bán" (Admin thêm/sửa/xoá, cùng mô hình `PageStatusOption`) — form Tạo Page chỉ chọn từ danh sách đó, không gõ text tự do. Chỉ hiện field này khi `page_type = BKT` (Page hệ thống không có khái niệm người bán, ẩn hẳn field như Giá mua/Người chi); optional — không bắt buộc chọn. Không sửa được sau khi tạo Page (chỉ chọn lúc Create, giống `purchase_price`/`page_type`).
 
 ## 15.3 Edit Page
 
@@ -726,25 +737,27 @@ Header:
 - Purchase month.
 - Status.
 
-Tabs:
+Tabs (bản gốc — xem Changelog 2026-08-20 ngay dưới, tab "Ads" đã bỏ):
 
 1. Overview.
 2. Revenue.
-3. Ads.
+3. ~~Ads~~ (bỏ, xem Changelog).
 4. Assignment History.
 5. Audit History.
 
 Overview:
 
 - Revenue kỳ chọn.
-- Ads kỳ chọn.
+- ~~Ads kỳ chọn~~ (bỏ, xem Changelog).
 - Lifetime Revenue.
-- Lifetime Ads.
+- ~~Lifetime Ads~~ (bỏ, xem Changelog).
 - Current employee.
 
 **Cập nhật (bổ sung sau Phase 13, theo yêu cầu user):**
 - Header thêm summary stat **"Người chi mua Page"** — đọc từ `PagePurchaseExpense.paidByAdmin` nếu đã tồn tại, fallback về `Page.paidByAdmin` nếu Page có giá mua nhưng chưa gán nhân viên (chưa tạo `PagePurchaseExpense`, xem mục 15.2). Hiện `—` nếu `purchase_price = 0`.
 - Thêm nút **"← Quay lại"** ở đầu trang, dẫn về `/admin/pages` — implement qua prop `backHref` dùng chung trên component `PageHeader` (`components/shared/page-header.tsx`), có thể tái dùng cho các trang Detail khác.
+
+**Cập nhật ngày 2026-08-20 (bỏ hẳn tab "Ads" — user request "ads tính theo nhân viên thay vì page", xem mục 6 Changelog): Ads không còn thuộc về một Page cụ thể nào, nên không còn gì để hiển thị trong tab riêng ở Page Detail.** Tabs còn lại: Overview, Revenue, Assignment History, Audit History (4 tab, không phải 5). Overview cũng bỏ 2 dòng "Ads kỳ chọn"/"Lifetime Ads". Quản lý Ads chuyển hẳn sang `/admin/ads` (List trung tâm, lọc theo Nhân viên) và xem theo từng nhân viên tại Employee Detail/`/user/costs` (bảng "Chi tiết chi phí").
 
 ---
 
@@ -1581,7 +1594,7 @@ Soft delete.
 
 ### `delete_ad_expense`
 
-Owner luôn auto-resolve từ Page Assignment.
+`employeeId` nhập trực tiếp (đổi 2026-08-20, xem mục 6 Changelog) — không còn auto-resolve từ Page Assignment như trước.
 
 ---
 
@@ -1842,14 +1855,14 @@ Nhân sự
   Nhân viên                           /admin/employees
   Admin                                /admin/admins
 
-Page
+Tài nguyên
   Tất cả Page                         /admin/pages
+  Ads                                 /admin/ads
+  Lương                               /admin/salary
+  Tài nguyên khác                     /admin/expenses
 
 Tài chính
   Doanh thu                           /admin/revenue
-  Ads                                 /admin/ads
-  Lương                               /admin/salary
-  Tài nguyên                          /admin/expenses
   Tiền đã nhận                        /admin/receipts
   Tiền nhân viên đã nhận              /admin/employee-receipts
 
@@ -1876,6 +1889,10 @@ Cài đặt
 **Cập nhật ngày 2026-08-20 (thêm mục "Admin" — user request "thêm cho tôi tab admin giống tab nhân viên, cũng click detail admin xem admin đã chi và nhận như nào"):** thêm mục **"Admin"** (`/admin/admins`, icon `ShieldCheck`) vào nhóm Nhân sự, ngay dưới "Nhân viên". `AdminsPage` (List) liệt kê mọi Admin (Tên/Tiền đã nhận/Tổng đã chi/Lợi nhuận, all-time, không phân trang/filter — quy mô cố định 2 Admin, cùng tiền lệ đơn giản hoá đã áp dụng cho `McpClient`/`PageStatusOption` list) — click tên vào `/admin/admins/[adminId]` (Detail), hiển thị 3 card tổng (Tiền đã nhận/Tổng đã chi/Lợi nhuận) + 4 card breakdown theo loại chi phí (Ads/Mua Page/Chi phí chung/Lương). **100% tái dùng `getAdminSpendingBreakdown()`** đã có sẵn (không viết query mới) — cùng nguồn dữ liệu đã dùng cho bảng "Chi phí & Tiền đã nhận theo Admin" ở Admin Dashboard (mục 11.1) và `/admin/profile` (mục ngay trên, vốn chỉ xem được chính mình). Khác `/admin/profile`: Detail này cho xem **bất kỳ** Admin nào (không giới hạn theo session), nên có thêm breakdown 4 loại chi phí mà Profile không hiển thị. Component `SummaryStat` (trước đây định nghĩa cục bộ trong `admin/employees/[employeeId]/page.tsx`) được tách ra `components/shared/summary-stat.tsx` để dùng chung giữa Employee Detail và Admin Detail, tránh trùng lặp.
 
 **Cập nhật tiếp ngay sau đó cùng ngày (user request "tôi cần bảng giống nhân viên thay vì tổng lại"): bỏ 4 card breakdown theo loại, thay bằng 2 bảng chi tiết từng dòng giao dịch — đúng bản chất "giống Employee Detail" hơn (bảng "Chi tiết chi phí" ở đó vốn liệt kê từng dòng, không phải tổng theo loại).** Vấn đề: `getAdminSpendingBreakdown()` chỉ trả **tổng** theo 4 loại (Ads/Mua Page/Chi phí chung/Lương), không có dòng giao dịch riêng lẻ — 4 service list function liên quan (`listAdExpenses`, `listAdminExpenses`, `listAdminReceipts`) trước đó chỉ filter theo `createdByAdminId`/`employeeId`, không có filter theo **`paidByAdminId`**/**`receivedByAdminId`** (người thực chi/thực nhận — khác người nhập record). Đã thêm: (1) filter `paidByAdminId` vào `ListAdExpenseParams`/`listAdExpenses` (`ads.service.ts`) và `ListAdminExpensesParams`/`listAdminExpenses` (`admin-expense.service.ts`); (2) filter `receivedByAdminId` vào `ListAdminReceiptsParams`/`listAdminReceipts` (`receipt.service.ts`); (3) hàm mới `listPagePurchaseExpensesByAdmin(adminId)` (`page.service.ts`, mirror `listPagePurchaseExpensesByEmployee`) — `PagePurchaseExpense` không có filter sẵn nào theo admin; (4) hàm mới `listActiveSalariesByAdmin(adminId)` (`salary.service.ts`) — trả mọi `SalaryHistory` đang hiệu lực (`effectiveTo=null`) mà Admin này trả, cùng convention "chỉ hiện giai đoạn đang hiệu lực" đã dùng cho Employee Detail/`/user/costs`. `AdminDetailPage` merge 4 nguồn (Ads/Mua Page/Lương/Chi phí chung) thành bảng "Chi tiết đã chi" (cột Loại/Nội dung — Page hoặc nhân viên hoặc mô tả tuỳ loại/Tháng/Số tiền/Ghi chú, sort theo ngày giảm dần, giống hệt cấu trúc `costDetailRows` của Employee Detail) + bảng "Chi tiết đã nhận" riêng từ `listAdminReceipts` (cột Tháng/Số tiền/Nguồn/Ghi chú). 3 card tổng (Tiền đã nhận/Tổng đã chi/Lợi nhuận) ở đầu trang **giữ nguyên** — chỉ phần breakdown theo loại đổi từ card sang bảng.
+
+**Cập nhật ngày 2026-08-20 (gom lại 2 nhóm nav — user request "hãy gom phần tất cả page, ads, lương và tài nguyên khác thành mục tài nguyên, phần doanh thu, tiền admin nhận và tiền nhân viên nhận thành mục tài chính"): bỏ hẳn nhóm "Page" độc lập, tách nhóm "Tài chính" gốc thành 2 nhóm mới.** Nhóm **"Tài nguyên"** (mới): Tất cả Page, Ads, Lương, Tài nguyên khác. Nhóm **"Tài chính"** (thu gọn): Doanh thu, Tiền admin đã nhận, Tiền nhân viên đã nhận. Chỉ đổi cách nhóm trong `nav-config.ts` — không đổi route/href/icon của bất kỳ item nào, không đổi component/service nào.
+
+**Cập nhật tiếp ngay sau đó cùng ngày (user request "Đổi này thành tài nguyên khác", trỏ vào nav item `/admin/expenses`): đổi tên item "Tài nguyên" → "Tài nguyên khác"** — tránh trùng tên với nhóm cha "Tài nguyên" mới gộp ở trên. Đồng bộ luôn tiêu đề trang (`PageHeader title`) tại `/admin/expenses` từ "Tài nguyên" → "Tài nguyên khác" cho khớp nhãn sidebar. Không đổi route/entity `AdminExpense`.
 
 ---
 
