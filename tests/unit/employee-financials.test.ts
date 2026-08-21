@@ -64,8 +64,8 @@ beforeAll(async () => {
   await createRevenue({ pageId, revenueMonth: monthDateRange(M2)!.gte, amount: 10_000_000n, note: "past" }, adminId);
 
   // Ads: one row in the current month, one row 2 months ago.
-  await createAdExpense({ paidByAdminId: adminId, pageId, expenseMonth: parseMonthKey(CURRENT)!, amount: 2_000_000n, note: "current" }, adminId);
-  await createAdExpense({ paidByAdminId: adminId, pageId, expenseMonth: parseMonthKey(M2)!, amount: 1_000_000n, note: "past" }, adminId);
+  await createAdExpense({ paidByAdminId: adminId, employeeId, expenseMonth: parseMonthKey(CURRENT)!, amount: 2_000_000n, note: "current" }, adminId);
+  await createAdExpense({ paidByAdminId: adminId, employeeId, expenseMonth: parseMonthKey(M2)!, amount: 1_000_000n, note: "past" }, adminId);
 
   // Salary: closed period [M5, M2) at 10M/month, ongoing period [M2, now] at 15M/month.
   await setEmployeeSalary(employeeId, { paidByAdminId: adminId, monthlySalary: 10_000_000n, effectiveFrom: parseMonthKey(M5)! }, adminId);
@@ -74,7 +74,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.revenue.deleteMany({ where: { pageId: { in: createdPageIds } } });
-  await prisma.adExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
+  await prisma.adExpense.deleteMany({ where: { employeeId } });
   await prisma.pagePurchaseExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.pageAssignment.deleteMany({ where: { pageId: { in: createdPageIds } } });
   await prisma.page.deleteMany({ where: { id: { in: createdPageIds } } });

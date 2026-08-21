@@ -11,6 +11,9 @@ import {
   HandCoins,
   PiggyBank,
   Palette,
+  Store,
+  IdCard,
+  Landmark,
   UserCog,
   KeyRound,
   ScrollText,
@@ -42,16 +45,18 @@ export const adminNavGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Page",
-    items: [{ label: "Tất cả Page", href: "/admin/pages", icon: FileText }],
+    label: "Tài nguyên",
+    items: [
+      { label: "Page", href: "/admin/pages", icon: FileText },
+      { label: "Ads", href: "/admin/ads", icon: Megaphone },
+      { label: "Lương", href: "/admin/salary", icon: Banknote },
+      { label: "Tài nguyên khác", href: "/admin/expenses", icon: Wallet },
+    ],
   },
   {
     label: "Tài chính",
     items: [
       { label: "Doanh thu", href: "/admin/revenue", icon: Receipt },
-      { label: "Ads", href: "/admin/ads", icon: Megaphone },
-      { label: "Lương", href: "/admin/salary", icon: Banknote },
-      { label: "Tài nguyên", href: "/admin/expenses", icon: Wallet },
       { label: "Tiền admin đã nhận", href: "/admin/receipts", icon: HandCoins },
       { label: "Tiền nhân viên đã nhận", href: "/admin/employee-receipts", icon: PiggyBank },
     ],
@@ -60,6 +65,9 @@ export const adminNavGroups: NavGroup[] = [
     label: "Cài đặt",
     items: [
       { label: "Loại trạng thái Page", href: "/admin/settings/page-status-options", icon: Palette },
+      { label: "Người bán", href: "/admin/settings/sellers", icon: Store },
+      { label: "Payout", href: "/admin/settings/payouts", icon: Landmark },
+      { label: "Via", href: "/admin/vias", icon: IdCard },
       { label: "Tài khoản", href: "/admin/settings/users", icon: UserCog },
       { label: "MCP / API", href: "/admin/settings/mcp", icon: KeyRound },
       { label: "Audit Log", href: "/admin/settings/audit", icon: ScrollText },
@@ -75,5 +83,6 @@ export const userNavItems: NavItem[] = [
   { label: "Doanh thu", href: "/user/revenue", icon: Receipt },
   { label: "Chi phí", href: "/user/costs", icon: Wallet },
   { label: "Tiền đã nhận", href: "/user/employee-receipts", icon: PiggyBank },
+  { label: "Via của tôi", href: "/user/vias", icon: IdCard },
   { label: "Hồ sơ", href: "/user/profile", icon: User },
 ];

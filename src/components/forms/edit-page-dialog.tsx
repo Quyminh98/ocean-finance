@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/forms/field";
 import { PageStatusPicker, type PageStatusPickerOption } from "@/components/forms/page-status-picker";
+import { PayoutPicker, type PayoutPickerOption } from "@/components/forms/payout-picker";
 import { updatePageAction, type UpdatePageState } from "@/server/actions/page.actions";
 import { UpdatePageClientSchema, type UpdatePageFormValues } from "@/server/validators/page.schema";
 
@@ -25,9 +26,10 @@ type EditPageDialogProps = {
   pageId: string;
   defaultValues: UpdatePageFormValues;
   statusOptions: PageStatusPickerOption[];
+  payoutOptions: PayoutPickerOption[];
 };
 
-export function EditPageDialog({ pageId, defaultValues, statusOptions }: EditPageDialogProps) {
+export function EditPageDialog({ pageId, defaultValues, statusOptions, payoutOptions }: EditPageDialogProps) {
   const [open, setOpen] = useState(false);
   const [actionState, setActionState] = useState<UpdatePageState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
@@ -98,6 +100,8 @@ export function EditPageDialog({ pageId, defaultValues, statusOptions }: EditPag
           </Field>
 
           <PageStatusPicker idPrefix="edit-page" control={control} errors={errors} options={statusOptions} />
+
+          <PayoutPicker idPrefix="edit-page" control={control} errors={errors} options={payoutOptions} />
 
           <Field label="Ghi chú" htmlFor="edit-page-notes" error={errors.notes?.message}>
             <textarea

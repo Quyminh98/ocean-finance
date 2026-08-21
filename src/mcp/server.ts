@@ -39,6 +39,7 @@ import {
   updatePageStatusOption,
   deletePageStatusOption,
 } from "@/server/services/page-status-option.service";
+import { listSellersWithUsage, createSeller, updateSeller, deleteSeller } from "@/server/services/seller.service";
 import { listAdminOptions } from "@/server/services/user-account.service";
 import { listAuditLogs } from "@/server/services/audit.service";
 import { parseMonthKey } from "@/lib/month";
@@ -265,11 +266,10 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     "list_ads",
     {
       title: "Danh sách chi phí Ads",
-      description: "Liệt kê AdExpense theo Page — lọc theo tháng, nhân viên, Page, từ khoá.",
+      description: "Liệt kê AdExpense theo nhân viên (không còn theo Page — user request 2026-08-20) — lọc theo tháng, nhân viên, từ khoá.",
       inputSchema: z.object({
         month: monthSchema,
         employeeId: z.uuid().optional(),
-        pageId: z.uuid().optional(),
         search: z.string().optional(),
         ...pageArgs,
       }),
@@ -488,19 +488,20 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     {
       title: "Tạo Page",
       description:
-        "Tạo Page mới (loại BKT — Page hệ thống chỉ tự tạo qua User). Nếu có `employeeId` sẽ gán ngay + tạo Page Purchase Expense khi `purchasePrice > 0` (bắt buộc `paidByAdminId` trong trường hợp đó, dù đã gán nhân viên hay chưa).",
+        "Tạo Page mới (loại BKT — Page hệ thống chỉ tự tạo qua User). Nếu có `employeeId` sẽ gán ngay + tạo Page Purchase Expense khi `purchasePrice > 0` (bắt buộc `paidByAdminId` trong trường hợp đó, dù đã gán nhân viên hay chưa). `sellerId` (FK → Seller, tra qua `list_sellers`) tuỳ chọn — chỉ áp dụng cho Page BKT.",
       inputSchema: z.object({
         name: z.string().trim().min(1),
         facebookUrl: z.url(),
         purchasePrice: mcpAmountSchema,
         purchaseMonth: requiredMonthSchema,
         paidByAdminId: z.uuid().optional(),
+        sellerId: z.uuid().optional(),
         employeeId: z.uuid().optional(),
         notes: mcpNoteSchema,
       }),
       annotations: WRITE_ANNOTATIONS,
     },
-    async ({ name, facebookUrl, purchasePrice, purchaseMonth, paidByAdminId, employeeId, notes }) =>
+    async ({ name, facebookUrl, purchasePrice, purchaseMonth, paidByAdminId, sellerId, employeeId, notes }) =>
       runMcpTool({
         mcpClientId,
         action: "CREATE",
@@ -515,6 +516,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
               purchaseMonth: requiredMonthToDate(purchaseMonth),
               assignEmployeeId: employeeId,
               paidByAdminId,
+              sellerId,
               notes,
             },
             createdByAdminId,
@@ -553,7 +555,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     {
       title: "Chuyển giao Page",
       description:
-        "Đóng PageAssignment đang active, mở assignment mới cho nhân viên khác — không đổi Revenue/AdExpense/PagePurchaseExpense đã có (snapshot, spec §15.4).",
+        "Đóng PageAssignment đang active, mở assignment mới cho nhân viên khác — Revenue đã có giữ nguyên snapshot cũ (spec §15.4). PagePurchaseExpense (nếu Page có, chỉ 1 dòng/Page) thì NGƯỢC LẠI — tự động ghi đè sang nhân viên/assignment mới. AdExpense không bị ảnh hưởng, vì không còn gắn với Page.",
       inputSchema: z.object({
         pageId: z.uuid(),
         newEmployeeId: z.uuid(),
@@ -605,7 +607,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     {
       title: "Xoá Page",
       description:
-        "Soft delete (spec §15.5) — ẩn khỏi danh sách, giữ nguyên lịch sử Revenue/AdExpense/PagePurchaseExpense/PageAssignment. Destructive action, yêu cầu confirm:true (spec §33).",
+        "Soft delete (spec §15.5) — ẩn khỏi danh sách, giữ nguyên lịch sử Revenue/PagePurchaseExpense/PageAssignment (AdExpense không gắn Page nên không liên quan). Destructive action, yêu cầu confirm:true (spec §33).",
       inputSchema: z.object({ pageId: z.uuid(), confirm: confirmSchema }),
       annotations: DESTRUCTIVE_ANNOTATIONS,
     },
@@ -712,9 +714,9 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     {
       title: "Nhập chi phí Ads",
       description:
-        "Nhập chi phí Ads theo Page + tháng — nhân viên tự resolve theo owner vào ngày 1 của tháng (spec §6/§18). Mỗi Page tối đa 1 record/tháng, nhập lại ghi đè.",
+        "Nhập chi phí Ads trực tiếp cho nhân viên + tháng (không còn qua Page — user request 2026-08-20). Mỗi nhân viên tối đa 1 record/tháng, nhập lại ghi đè.",
       inputSchema: z.object({
-        pageId: z.uuid(),
+        employeeId: z.uuid(),
         expenseMonth: requiredMonthSchema,
         amount: mcpAmountSchema,
         note: mcpNoteSchema,
@@ -722,7 +724,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
       }),
       annotations: WRITE_ANNOTATIONS,
     },
-    async ({ pageId, expenseMonth, amount, note, paidByAdminId }) =>
+    async ({ employeeId, expenseMonth, amount, note, paidByAdminId }) =>
       runMcpTool({
         mcpClientId,
         action: "CREATE",
@@ -730,7 +732,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
         auditOnSuccess: false,
         run: () =>
           createAdExpense(
-            { pageId, expenseMonth: requiredMonthToDate(expenseMonth), amount: BigInt(amount), note, paidByAdminId },
+            { employeeId, expenseMonth: requiredMonthToDate(expenseMonth), amount: BigInt(amount), note, paidByAdminId },
             createdByAdminId,
             auditMeta,
           ),
@@ -741,10 +743,10 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     "update_ad_expense",
     {
       title: "Sửa chi phí Ads",
-      description: "Đổi Page/tháng/số tiền/ghi chú/người chi — đổi Page hoặc tháng sẽ resolve lại nhân viên snapshot.",
+      description: "Đổi nhân viên/tháng/số tiền/ghi chú/người chi.",
       inputSchema: z.object({
         adExpenseId: z.uuid(),
-        pageId: z.uuid(),
+        employeeId: z.uuid(),
         expenseMonth: requiredMonthSchema,
         amount: mcpAmountSchema,
         note: mcpNoteSchema,
@@ -752,7 +754,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
       }),
       annotations: WRITE_ANNOTATIONS,
     },
-    async ({ adExpenseId, pageId, expenseMonth, amount, note, paidByAdminId }) =>
+    async ({ adExpenseId, employeeId, expenseMonth, amount, note, paidByAdminId }) =>
       runMcpTool({
         mcpClientId,
         action: "UPDATE",
@@ -762,7 +764,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
         run: () =>
           updateAdExpense(
             adExpenseId,
-            { pageId, expenseMonth: requiredMonthToDate(expenseMonth), amount: BigInt(amount), note, paidByAdminId },
+            { employeeId, expenseMonth: requiredMonthToDate(expenseMonth), amount: BigInt(amount), note, paidByAdminId },
             createdByAdminId,
             auditMeta,
           ),
@@ -1113,6 +1115,86 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
           requireConfirm(confirm);
           await deletePageStatusOption(optionId, createdByAdminId, auditMeta);
           return { optionId, deleted: true };
+        },
+      }),
+  );
+
+  const sellerNameSchema = z.string().trim().min(1).max(100, { error: "Tên tối đa 100 ký tự." });
+
+  server.registerTool(
+    "list_sellers",
+    {
+      title: "Danh sách người bán",
+      description: "Liệt kê Seller (người bán Page, Cài đặt → Người bán) kèm số Page đang dùng mỗi người bán.",
+      inputSchema: z.object({}),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async () =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "Seller",
+        run: () => listSellersWithUsage(),
+      }),
+  );
+
+  server.registerTool(
+    "create_seller",
+    {
+      title: "Tạo người bán",
+      description: "Tạo một người bán mới (Cài đặt → Người bán) — dùng để chọn khi tạo Page BKT.",
+      inputSchema: z.object({ name: sellerNameSchema }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ name }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "CREATE",
+        entityType: "Seller",
+        auditOnSuccess: false,
+        run: () => createSeller({ name }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "update_seller",
+    {
+      title: "Sửa người bán",
+      description: "Đổi tên một người bán đã có.",
+      inputSchema: z.object({ sellerId: z.uuid(), name: sellerNameSchema }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ sellerId, name }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "UPDATE",
+        entityType: "Seller",
+        entityId: sellerId,
+        auditOnSuccess: false,
+        run: () => updateSeller(sellerId, { name }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "delete_seller",
+    {
+      title: "Xoá người bán",
+      description:
+        "Hard delete — metadata hiển thị thuần tuý, không phải dữ liệu tài chính (xem schema.md). Page đang gắn người bán này tự rơi về sellerId = null (ON DELETE SET NULL), không mất Page. Destructive action, yêu cầu confirm:true (spec §33).",
+      inputSchema: z.object({ sellerId: z.uuid(), confirm: confirmSchema }),
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async ({ sellerId, confirm }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "DELETE",
+        entityType: "Seller",
+        entityId: sellerId,
+        auditOnSuccess: false,
+        run: async () => {
+          requireConfirm(confirm);
+          await deleteSeller(sellerId, createdByAdminId, auditMeta);
+          return { sellerId, deleted: true };
         },
       }),
   );

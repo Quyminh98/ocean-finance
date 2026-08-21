@@ -54,7 +54,7 @@ export default async function UserCostsPage() {
   const costDetailRows: CostDetailRow[] = [
     ...adExpenses.items.map((row) => ({
       key: `ads-${row.adExpenseId}`,
-      pageName: row.pageName,
+      pageName: null,
       type: "Ads" as const,
       sortDate: row.expenseMonth,
       monthLabel: formatMonth(row.expenseMonth.toISOString().slice(0, 7)),

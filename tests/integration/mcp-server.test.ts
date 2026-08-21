@@ -139,7 +139,7 @@ afterAll(async () => {
     },
   });
   await prisma.revenue.deleteMany({ where: { pageId: { in: createdPageIds } } });
-  await prisma.adExpense.deleteMany({ where: { pageId: { in: createdPageIds } } });
+  await prisma.adExpense.deleteMany({ where: { employeeId } });
   await prisma.adminExpense.deleteMany({ where: { id: { in: createdAdminExpenseIds } } });
   await prisma.adminReceipt.deleteMany({ where: { id: { in: createdAdminReceiptIds } } });
   await prisma.employeeReceipt.deleteMany({ where: { id: { in: createdEmployeeReceiptIds } } });
@@ -531,11 +531,11 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
     expect(revenue.deletedAt).not.toBeNull();
   });
 
-  it("create_ad_expense / update_ad_expense / delete_ad_expense round-trip, owner auto-resolved", async () => {
+  it("create_ad_expense / update_ad_expense / delete_ad_expense round-trip (Ads by employee, not Page — user request 2026-08-20)", async () => {
     const client = await connectFreshWriteClient();
     const created = await client.callTool({
       name: "create_ad_expense",
-      arguments: { pageId: flowPageId, expenseMonth: "2026-09", amount: 1_000_000, paidByAdminId: adminId },
+      arguments: { employeeId, expenseMonth: "2026-09", amount: 1_000_000, paidByAdminId: adminId },
     });
     const createdEnvelope = parseEnvelope(created);
     expect(createdEnvelope.success).toBe(true);
@@ -545,7 +545,7 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
       name: "update_ad_expense",
       arguments: {
         adExpenseId: flowAdExpenseId,
-        pageId: flowPageId,
+        employeeId,
         expenseMonth: "2026-09",
         amount: 1_500_000,
         paidByAdminId: adminId,
@@ -568,7 +568,7 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
     expect(adExpense.deletedAt).not.toBeNull();
   });
 
-  it("transfer_page closes the active assignment and opens a new one, never touching prior snapshots", async () => {
+  it("transfer_page closes the active assignment and opens a new one, reassigning PagePurchaseExpense to the new owner", async () => {
     const client = await connectFreshWriteClient();
     const secondEmployee = await client.callTool({
       name: "create_employee",
@@ -590,10 +590,11 @@ describe("Write MCP tools (spec §32/§33/§53, plan.md Phase 16)", () => {
     const currentAssignment = await prisma.pageAssignment.findFirst({ where: { pageId: flowPageId, endedAt: null } });
     expect(currentAssignment?.employeeId).toBe(secondEmployeeData.employeeId);
 
-    // Snapshot pattern — the PagePurchaseExpense created under the first employee never changes on transfer.
+    // Reversed 2026-08-21 (user request) — PagePurchaseExpense is the one deliberate exception to the
+    // snapshot-never-moves rule: it follows the current owner, re-snapshotted on every transfer.
     const after = await prisma.pagePurchaseExpense.findUnique({ where: { pageId: flowPageId } });
-    expect(after?.employeeIdSnapshot).toBe(before?.employeeIdSnapshot);
-    expect(after?.employeeIdSnapshot).toBe(employeeId);
+    expect(after?.employeeIdSnapshot).not.toBe(before?.employeeIdSnapshot);
+    expect(after?.employeeIdSnapshot).toBe(secondEmployeeData.employeeId);
   });
 
   it("delete_page rejects without confirm:true, soft-deletes with it, leaving assignment/purchase history intact", async () => {

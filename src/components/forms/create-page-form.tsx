@@ -10,19 +10,23 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Field } from "@/components/forms/field";
 import { PageStatusPicker, type PageStatusPickerOption } from "@/components/forms/page-status-picker";
+import { PayoutPicker, type PayoutPickerOption } from "@/components/forms/payout-picker";
 import { createPageAction, type CreatePageState } from "@/server/actions/page.actions";
 import { CreatePageClientSchema, NO_EMPLOYEE_SENTINEL, PAGE_TYPES, type CreatePageFormValues } from "@/server/validators/page.schema";
 import type { EmployeeOption } from "@/server/services/employee.service";
 import type { AdminOption } from "@/server/services/user-account.service";
+import type { SellerListItem } from "@/server/services/seller.service";
 import { currentMonthKey } from "@/lib/dates";
 
 type CreatePageFormProps = {
   employees: EmployeeOption[];
   adminOptions: AdminOption[];
   statusOptions: PageStatusPickerOption[];
+  sellers: SellerListItem[];
+  payouts: PayoutPickerOption[];
 };
 
-export function CreatePageForm({ employees, adminOptions, statusOptions }: CreatePageFormProps) {
+export function CreatePageForm({ employees, adminOptions, statusOptions, sellers, payouts }: CreatePageFormProps) {
   const router = useRouter();
   const [state, setState] = useState<CreatePageState | undefined>(undefined);
   const [isPending, startTransition] = useTransition();
@@ -32,6 +36,9 @@ export function CreatePageForm({ employees, adminOptions, statusOptions }: Creat
 
   const adminLabels: Record<string, string> = {};
   for (const option of adminOptions) adminLabels[option.adminId] = option.name;
+
+  const sellerLabels: Record<string, string> = {};
+  for (const seller of sellers) sellerLabels[seller.sellerId] = seller.name;
 
   const pageTypeLabels: Record<(typeof PAGE_TYPES)[number], string> = { SYSTEM: "Page hệ thống", BKT: "Page BKT" };
 
@@ -51,6 +58,8 @@ export function CreatePageForm({ employees, adminOptions, statusOptions }: Creat
       purchaseMonth: currentMonthKey(),
       assignEmployeeId: NO_EMPLOYEE_SENTINEL,
       paidByAdminId: "",
+      sellerId: "",
+      payoutId: "",
       statusIds: [],
       notes: "",
     },
@@ -67,6 +76,7 @@ export function CreatePageForm({ employees, adminOptions, statusOptions }: Creat
     if (isSystemPage) {
       setValue("purchasePrice", "0");
       setValue("paidByAdminId", "");
+      setValue("sellerId", "");
     }
   }, [isSystemPage, setValue]);
 
@@ -189,6 +199,31 @@ export function CreatePageForm({ employees, adminOptions, statusOptions }: Creat
           />
         </Field>
       ) : null}
+
+      {isSystemPage ? null : (
+        <Field label="Người bán (tuỳ chọn)" htmlFor="sellerId" error={errors.sellerId?.message}>
+          <Controller
+            control={control}
+            name="sellerId"
+            render={({ field }) => (
+              <Select value={field.value} onValueChange={field.onChange}>
+                <SelectTrigger id="sellerId" className="h-10 w-full rounded-lg">
+                  <SelectValue>{(value: string) => sellerLabels[value] ?? "Chưa chọn người bán"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {sellers.map((seller) => (
+                    <SelectItem key={seller.sellerId} value={seller.sellerId}>
+                      {seller.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </Field>
+      )}
+
+      <PayoutPicker idPrefix="create-page" control={control} errors={errors} options={payouts} />
 
       <PageStatusPicker idPrefix="create-page" control={control} errors={errors} options={statusOptions} />
 

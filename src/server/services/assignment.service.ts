@@ -13,8 +13,12 @@ export type ResolvedPageOwner = {
 
 /**
  * Central owner-resolution rule (spec §36 / CLAUDE.md) — bắt buộc dùng khi
- * tạo/sửa Revenue và AdExpense (Phase 5/6). Accepts an optional transaction
- * client so callers can resolve-then-write atomically.
+ * tạo/sửa Revenue (Phase 5). Accepts an optional transaction client so
+ * callers can resolve-then-write atomically.
+ *
+ * KHÔNG còn dùng cho AdExpense (đảo lại từ Phase 6, user request 2026-08-20
+ * "ads đang tính theo page, hãy sửa cho tôi là ads tính theo nhân viên") —
+ * AdExpense giờ nhận `employeeId` trực tiếp, không qua Page/PageAssignment.
  */
 export async function resolvePageOwner(
   pageId: string,
@@ -198,8 +202,15 @@ export type TransferPageInput = {
 
 /**
  * Transfer Page — close the active assignment and open a new one (spec §15.4
- * / §44). Never touches Revenue/AdExpense/PagePurchaseExpense already
- * created under the old assignment (snapshot pattern, CLAUDE.md).
+ * / §44). Never touches Revenue/AdExpense already created under the old
+ * assignment (snapshot pattern, CLAUDE.md) — those stay attributed to
+ * whoever managed the Page at the time they were recorded.
+ *
+ * **PagePurchaseExpense is the one deliberate exception** (user request
+ * 2026-08-21, reversing the "never moves" rule schema.md previously
+ * documented for this table): the Page's purchase-cost record — there's at
+ * most one per Page — follows the *current* owner, re-snapshotted to the new
+ * employee/assignment on every transfer. Revenue/AdExpense are unaffected.
  */
 export async function transferPage(
   pageId: string,
@@ -233,12 +244,14 @@ export async function transferPage(
     );
   }
 
-  const newAssignment = await prisma.$transaction(async (tx) => {
+  const existingPurchaseExpense = await prisma.pagePurchaseExpense.findFirst({ where: { pageId, deletedAt: null } });
+
+  const { newAssignment, reassignedPurchaseExpenseId } = await prisma.$transaction(async (tx) => {
     await tx.pageAssignment.update({
       where: { id: activeAssignment.id },
       data: { endedAt: input.effectiveDate },
     });
-    return tx.pageAssignment.create({
+    const newAssignment = await tx.pageAssignment.create({
       data: {
         pageId,
         employeeId: input.newEmployeeId,
@@ -247,6 +260,15 @@ export async function transferPage(
         note: input.note,
       },
     });
+
+    if (existingPurchaseExpense) {
+      await tx.pagePurchaseExpense.update({
+        where: { id: existingPurchaseExpense.id },
+        data: { employeeIdSnapshot: input.newEmployeeId, assignmentIdSnapshot: newAssignment.id },
+      });
+    }
+
+    return { newAssignment, reassignedPurchaseExpenseId: existingPurchaseExpense?.id ?? null };
   });
 
   await logAction({
@@ -259,6 +281,7 @@ export async function transferPage(
       employeeId: input.newEmployeeId,
       assignmentId: newAssignment.id,
       effectiveDate: input.effectiveDate.toISOString().slice(0, 10),
+      reassignedPurchaseExpenseId,
     },
     ipAddress: meta.ipAddress,
     userAgent: meta.userAgent,

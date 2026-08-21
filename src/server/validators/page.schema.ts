@@ -53,6 +53,24 @@ const paidByAdminIdBaseSchema = z.uuid({ error: "Vui lòng chọn người chi."
 const paidByAdminIdInputSchema = z.union([z.literal(""), paidByAdminIdBaseSchema]);
 const paidByAdminIdSchema = paidByAdminIdInputSchema.transform((value) => (value ? value : undefined));
 
+// "Người bán" — FK → Seller (Cài đặt → "Người bán"), optional, only shown on
+// the Create Page form for pageType=BKT (user request 2026-08-20). Same
+// "unset via empty string" sentinel pattern as `paidByAdminIdInputSchema`
+// above — always optional here, the service layer just drops it for SYSTEM.
+const sellerIdBaseSchema = z.uuid({ error: "Người bán không hợp lệ." });
+const sellerIdInputSchema = z.union([z.literal(""), sellerIdBaseSchema]);
+const sellerIdSchema = sellerIdInputSchema.transform((value) => (value ? value : undefined));
+
+// "Payout" — FK → Payout (Cài đặt → "Payout"), optional and — unlike
+// sellerId — editable both at Create AND Edit Page, by Admin (any Page) or
+// the Employee currently managing the Page (user request 2026-08-20). Same
+// "unset via empty string" sentinel pattern as paidByAdminId/sellerId; on
+// update flows the service layer writes `payoutId ?? null` unconditionally
+// (same full-replace semantics as `notes`), so submitting "" there clears it.
+const payoutIdBaseSchema = z.uuid({ error: "Payout không hợp lệ." });
+const payoutIdInputSchema = z.union([z.literal(""), payoutIdBaseSchema]);
+const payoutIdSchema = payoutIdInputSchema.transform((value) => (value ? value : undefined));
+
 // SYSTEM = no purchase price (Admin form hides price/payer, User self-service
 // only creates this type). BKT = existing paid-purchase flow, Admin-only.
 export const PAGE_TYPES = ["SYSTEM", "BKT"] as const;
@@ -67,6 +85,8 @@ export const CreatePageSchema = z.object({
   purchaseMonth: monthInputSchema,
   assignEmployeeId: assignEmployeeIdSchema,
   paidByAdminId: paidByAdminIdSchema,
+  sellerId: sellerIdSchema,
+  payoutId: payoutIdSchema,
   statusIds: statusIdsSchema,
   notes: notesSchema,
 });
@@ -82,6 +102,8 @@ export const CreatePageClientSchema = z.object({
   purchaseMonth: monthInputSchema,
   assignEmployeeId: assignEmployeeIdInputSchema,
   paidByAdminId: paidByAdminIdInputSchema,
+  sellerId: sellerIdInputSchema,
+  payoutId: payoutIdInputSchema,
   statusIds: statusIdsInputSchema,
   notes: notesInputSchema,
 });
@@ -93,6 +115,7 @@ export type CreatePageFormValues = z.infer<typeof CreatePageClientSchema>;
 export const CreateSystemPageSelfSchema = z.object({
   name: nameSchema,
   facebookUrl: facebookUrlSchema,
+  payoutId: payoutIdSchema,
   statusIds: statusIdsSchema,
   notes: notesSchema,
 });
@@ -100,6 +123,7 @@ export const CreateSystemPageSelfSchema = z.object({
 export const CreateSystemPageSelfClientSchema = z.object({
   name: nameSchema,
   facebookUrl: facebookUrlSchema,
+  payoutId: payoutIdInputSchema,
   statusIds: statusIdsInputSchema,
   notes: notesInputSchema,
 });
@@ -109,6 +133,7 @@ export type CreateSystemPageSelfFormValues = z.infer<typeof CreateSystemPageSelf
 export const UpdatePageSchema = z.object({
   name: nameSchema,
   facebookUrl: facebookUrlSchema,
+  payoutId: payoutIdSchema,
   statusIds: statusIdsSchema,
   notes: notesSchema,
 });
@@ -116,6 +141,7 @@ export const UpdatePageSchema = z.object({
 export const UpdatePageClientSchema = z.object({
   name: nameSchema,
   facebookUrl: facebookUrlSchema,
+  payoutId: payoutIdInputSchema,
   statusIds: statusIdsInputSchema,
   notes: notesInputSchema,
 });
@@ -123,13 +149,16 @@ export const UpdatePageClientSchema = z.object({
 export type UpdatePageFormValues = z.infer<typeof UpdatePageClientSchema>;
 
 // Employee-scoped "chỉ có thể edit được trạng thái" (user request
-// 2026-08-18) — same statusIds shape as UpdatePageSchema above, just without
-// name/facebookUrl/notes (those stay Admin-only).
+// 2026-08-18) — extended 2026-08-20 to also allow the Employee currently
+// managing a Page to change its Payout ("áp dụng chọn payout cho page cả ở
+// admin và nhân viên"), still without name/facebookUrl/notes (Admin-only).
 export const UpdatePageStatusSchema = z.object({
+  payoutId: payoutIdSchema,
   statusIds: statusIdsSchema,
 });
 
 export const UpdatePageStatusClientSchema = z.object({
+  payoutId: payoutIdInputSchema,
   statusIds: statusIdsInputSchema,
 });
 

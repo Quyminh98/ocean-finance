@@ -52,3 +52,11 @@ export async function requireUser(): Promise<CurrentUser> {
   if (user.role !== "USER") redirect("/admin/dashboard");
   return user;
 }
+
+/** Any authenticated, active account — either role. For actions where the actor themselves
+ * is the resource owner (e.g. Via — "ai tạo là người đó cầm", both Employee and Admin self-serve). */
+export async function requireActiveUser(): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) redirect("/api/auth/invalidate");
+  return user;
+}

@@ -62,7 +62,7 @@ export default async function AdminExpensesPage({
   return (
     <div>
       <PageHeader
-        title="Tài nguyên"
+        title="Tài nguyên khác"
         description="Chi phí không gắn với Page hoặc nhân viên cụ thể (tool, server, văn phòng...) — chỉ cộng vào Tổng chi phí hệ thống."
         action={!showDeleted ? <CreateAdminExpenseDialog adminOptions={adminOptions} /> : undefined}
       />

@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageStatusChipList } from "@/components/tables/page-status-chip-list";
 import { PageTypeChip } from "@/components/tables/page-type-chip";
+import { StatusChip } from "@/components/tables/status-chip";
 import { SearchInput } from "@/components/tables/search-input";
 import { PageFilters } from "@/components/tables/page-filters";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { requireUser } from "@/server/auth/rbac";
 import { getEmployeeDetailByUserId } from "@/server/services/employee.service";
 import { listPagesByEmployee } from "@/server/services/page.service";
 import { listPageStatusOptions } from "@/server/services/page-status-option.service";
+import { listPayouts } from "@/server/services/payout.service";
 import { PAGE_TYPES } from "@/server/validators/page.schema";
 
 type UserPagesSearchParams = { q?: string; pageType?: string; statusId?: string };
@@ -35,11 +37,13 @@ export default async function UserPagesPage({
     ? (params.pageType as (typeof PAGE_TYPES)[number])
     : undefined;
 
-  const [items, statusOptions] = await Promise.all([
+  const [items, statusOptions, payouts] = await Promise.all([
     listPagesByEmployee(profile.employeeId, { search: params.q, pageType, statusId: params.statusId }),
     listPageStatusOptions(),
+    listPayouts(),
   ]);
   const statusPickerOptions = statusOptions.map((option) => ({ optionId: option.optionId, label: option.label, color: option.color }));
+  const payoutPickerOptions = payouts.map((payout) => ({ payoutId: payout.payoutId, name: payout.name, status: payout.status }));
   const hasActiveFilter = Boolean(params.q || params.pageType || params.statusId);
 
   return (
@@ -82,6 +86,7 @@ export default async function UserPagesPage({
                 <TableHead className="text-right font-label-caps text-label-caps text-on-surface-variant">Giá mua</TableHead>
                 <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Tháng mua</TableHead>
                 <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Trạng thái</TableHead>
+                <TableHead className="font-label-caps text-label-caps text-on-surface-variant">Payout</TableHead>
                 <TableHead className="text-right font-label-caps text-label-caps text-on-surface-variant">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
@@ -110,11 +115,25 @@ export default async function UserPagesPage({
                     <PageStatusChipList statuses={row.currentStatuses} />
                   </TableCell>
                   <TableCell>
+                    {row.payout ? (
+                      <div className="flex items-center gap-stack-sm">
+                        <span className="text-on-surface-variant">{row.payout.name}</span>
+                        <StatusChip status={row.payout.status} />
+                      </div>
+                    ) : (
+                      <span className="text-on-surface-variant">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center justify-end">
                       <EditPageStatusDialog
                         pageId={row.pageId}
-                        defaultValues={{ statusIds: row.currentStatuses.map((status) => status.statusId) }}
+                        defaultValues={{
+                          statusIds: row.currentStatuses.map((status) => status.statusId),
+                          payoutId: row.payout?.payoutId ?? "",
+                        }}
                         statusOptions={statusPickerOptions}
+                        payoutOptions={payoutPickerOptions}
                       />
                     </div>
                   </TableCell>

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { logAction, auditActorFields } from "@/server/audit/log-action";
 import type { AuditMeta } from "@/server/services/employee.service";
-import type { PageStatusColor, PageType } from "@/generated/prisma/client";
+import type { PageStatusColor, PageType, PayoutStatus } from "@/generated/prisma/client";
 import { currentMonthKey } from "@/lib/dates";
 import { parseMonthKey } from "@/lib/month";
 
@@ -13,21 +13,34 @@ export class PageError extends Error {
   }
 }
 
+/** Shared mapper for the `payout` relation, used by listPages/listPagesByEmployee/getPageDetail. */
+function toPagePayoutInfo(
+  payout: { id: string; name: string; bankName: string; status: PayoutStatus } | null,
+): PagePayoutInfo | null {
+  return payout ? { payoutId: payout.id, name: payout.name, bankName: payout.bankName, status: payout.status } : null;
+}
+
 export const PAGES_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 export type PagesPageSize = (typeof PAGES_PAGE_SIZE_OPTIONS)[number];
 
 export type PageStatusInfo = { statusId: string; label: string; color: PageStatusColor };
+/** `name` ("Tên payout") is the identifying label everywhere this is displayed — `bankName`
+ * stays as secondary bank account detail (user request 2026-08-21). */
+export type PagePayoutInfo = { payoutId: string; name: string; bankName: string; status: PayoutStatus };
 
 export type PageListItem = {
   pageId: string;
   name: string;
   facebookUrl: string;
   pageType: PageType;
+  currentEmployeeId: string | null;
   currentEmployeeName: string | null;
   purchasePrice: bigint;
   purchaseMonth: Date;
   /** Empty array = "chưa đặt" (never assigned, or every assigned option was since deleted). */
   currentStatuses: PageStatusInfo[];
+  /** null = no Payout picked yet, or the picked one was since deleted (user request 2026-08-20). */
+  payout: PagePayoutInfo | null;
   notes: string | null;
   createdAt: Date;
 };
@@ -84,6 +97,7 @@ export async function listPages(params: ListPagesParams): Promise<PageListResult
       include: {
         assignments: { where: { endedAt: null }, take: 1, include: { employee: { include: { user: true } } } },
         statusAssignments: { include: { statusOption: true }, orderBy: { createdAt: "asc" } },
+        payout: { select: { id: true, name: true, bankName: true, status: true } },
       },
     }),
   ]);
@@ -93,6 +107,7 @@ export async function listPages(params: ListPagesParams): Promise<PageListResult
     name: row.name,
     facebookUrl: row.facebookUrl,
     pageType: row.pageType,
+    currentEmployeeId: row.assignments[0]?.employeeId ?? null,
     currentEmployeeName: row.assignments[0]?.employee.user.name ?? null,
     purchasePrice: row.purchasePrice,
     purchaseMonth: row.purchaseMonth,
@@ -101,6 +116,7 @@ export async function listPages(params: ListPagesParams): Promise<PageListResult
       label: assignment.statusOption.label,
       color: assignment.statusOption.color,
     })),
+    payout: toPagePayoutInfo(row.payout),
     notes: row.notes,
     createdAt: row.createdAt,
   }));
@@ -149,6 +165,7 @@ export async function listPagesByEmployee(employeeId: string, params: ListPagesB
     include: {
       assignments: { where: { endedAt: null }, take: 1, include: { employee: { include: { user: true } } } },
       statusAssignments: { include: { statusOption: true }, orderBy: { createdAt: "asc" } },
+      payout: { select: { id: true, name: true, bankName: true, status: true } },
     },
   });
 
@@ -157,6 +174,7 @@ export async function listPagesByEmployee(employeeId: string, params: ListPagesB
     name: row.name,
     facebookUrl: row.facebookUrl,
     pageType: row.pageType,
+    currentEmployeeId: row.assignments[0]?.employeeId ?? null,
     currentEmployeeName: row.assignments[0]?.employee.user.name ?? null,
     purchasePrice: row.purchasePrice,
     purchaseMonth: row.purchaseMonth,
@@ -165,6 +183,7 @@ export async function listPagesByEmployee(employeeId: string, params: ListPagesB
       label: assignment.statusOption.label,
       color: assignment.statusOption.color,
     })),
+    payout: toPagePayoutInfo(row.payout),
     notes: row.notes,
     createdAt: row.createdAt,
   }));
@@ -197,6 +216,10 @@ export type PageDetail = {
   /** Who paid (or is designated to pay) for the purchase — null when purchasePrice=0. Sourced from the
    * PagePurchaseExpense once it exists, falling back to the Page's own paidByAdminId before that (deferred case). */
   purchasePaidByAdminName: string | null;
+  /** Người bán — null for pageType=SYSTEM or when no Seller was picked at creation (user request 2026-08-20). */
+  sellerName: string | null;
+  /** Payout/bank account — null when none picked, or the picked one was since deleted (user request 2026-08-20). */
+  payout: PagePayoutInfo | null;
 };
 
 export async function getPageDetail(pageId: string): Promise<PageDetail | null> {
@@ -206,6 +229,8 @@ export async function getPageDetail(pageId: string): Promise<PageDetail | null> 
       assignments: { where: { endedAt: null }, take: 1, include: { employee: { include: { user: true } } } },
       purchaseExpense: { select: { paidByAdmin: { select: { name: true } } } },
       paidByAdmin: { select: { name: true } },
+      seller: { select: { name: true } },
+      payout: { select: { id: true, name: true, bankName: true, status: true } },
       statusAssignments: { include: { statusOption: true }, orderBy: { createdAt: "asc" } },
     },
   });
@@ -230,6 +255,8 @@ export async function getPageDetail(pageId: string): Promise<PageDetail | null> 
       ? { employeeId: activeAssignment.employeeId, name: activeAssignment.employee.user.name }
       : null,
     purchasePaidByAdminName: row.purchaseExpense?.paidByAdmin.name ?? row.paidByAdmin?.name ?? null,
+    sellerName: row.seller?.name ?? null,
+    payout: toPagePayoutInfo(row.payout),
   };
 }
 
@@ -248,6 +275,11 @@ export type CreatePageInput = {
   /** Required whenever purchasePrice > 0, regardless of assignEmployeeId — captured now so
    * `assignEmployee()` can reuse it later without asking again (user request 2026-08-18). */
   paidByAdminId?: string;
+  /** FK → Seller — người bán, only persisted for pageType=BKT (dropped silently for SYSTEM,
+   * same treatment as purchasePrice/paidByAdminId — user request 2026-08-20). */
+  sellerId?: string;
+  /** FK → Payout — payout/bank account, no pageType restriction (user request 2026-08-20). */
+  payoutId?: string;
   /** FKs → PageStatusOption, a Page can carry several at once (user request 2026-08-18). Omitted/empty
    * leaves the Page with zero statuses ("chưa đặt"), same end state as when every assigned option gets
    * deleted later. */
@@ -293,6 +325,15 @@ export async function createPage(
     const payer = await prisma.user.findUnique({ where: { id: input.paidByAdminId } });
     if (!payer || payer.role !== "ADMIN") throw new PageError("Người chi không hợp lệ.", "INVALID_PAYER");
   }
+  if (input.sellerId) {
+    const seller = await prisma.seller.findUnique({ where: { id: input.sellerId } });
+    if (!seller) throw new PageError("Người bán không hợp lệ.", "INVALID_SELLER");
+  }
+  const sellerId = pageType === "BKT" ? input.sellerId : undefined;
+  if (input.payoutId) {
+    const payout = await prisma.payout.findUnique({ where: { id: input.payoutId } });
+    if (!payout) throw new PageError("Payout không hợp lệ.", "INVALID_PAYOUT");
+  }
   const statusIds = [...new Set(input.statusIds ?? [])];
   if (statusIds.length > 0) {
     const count = await prisma.pageStatusOption.count({ where: { id: { in: statusIds } } });
@@ -309,6 +350,8 @@ export async function createPage(
         purchasePrice: input.purchasePrice,
         purchaseMonth: input.purchaseMonth,
         paidByAdminId: needsPayer ? input.paidByAdminId : undefined,
+        sellerId,
+        payoutId: input.payoutId,
         notes: input.notes,
         createdByAdminId: adminId,
       },
@@ -364,6 +407,8 @@ export async function createPage(
       assignmentId: assignment?.id ?? null,
       purchaseExpenseId: purchaseExpense?.id ?? null,
       paidByAdminId: needsPayer ? input.paidByAdminId : null,
+      sellerId: sellerId ?? null,
+      payoutId: input.payoutId ?? null,
     },
     ipAddress: meta.ipAddress,
     userAgent: meta.userAgent,
@@ -375,6 +420,8 @@ export async function createPage(
 export type CreateSystemPageForSelfInput = {
   name: string;
   facebookUrl: string;
+  /** FK → Payout (user request 2026-08-20 — "áp dụng chọn payout cho page cả ở admin và nhân viên"). */
+  payoutId?: string;
   statusIds?: string[];
   notes?: string;
 };
@@ -401,6 +448,10 @@ export async function createSystemPageForSelf(
     const count = await prisma.pageStatusOption.count({ where: { id: { in: statusIds } } });
     if (count !== statusIds.length) throw new PageError("Trạng thái không hợp lệ.", "INVALID_STATUS");
   }
+  if (input.payoutId) {
+    const payout = await prisma.payout.findUnique({ where: { id: input.payoutId } });
+    if (!payout) throw new PageError("Payout không hợp lệ.", "INVALID_PAYOUT");
+  }
   const monthStart = parseMonthKey(currentMonthKey())!;
 
   const { page, assignment } = await prisma.$transaction(async (tx) => {
@@ -411,6 +462,7 @@ export async function createSystemPageForSelf(
         pageType: "SYSTEM",
         purchasePrice: 0n,
         purchaseMonth: monthStart,
+        payoutId: input.payoutId,
         notes: input.notes,
         createdByAdminId: userId,
       },
@@ -445,6 +497,7 @@ export async function createSystemPageForSelf(
       facebookUrl: input.facebookUrl,
       pageType: "SYSTEM",
       purchaseMonth: monthStart.toISOString().slice(0, 7),
+      payoutId: input.payoutId ?? null,
       statusIds,
       assignmentId: assignment.id,
       selfService: true,
@@ -461,10 +514,13 @@ export type UpdatePageInput = {
   facebookUrl: string;
   /** FKs → PageStatusOption — replaces the Page's full set of status tags (user request 2026-08-18). */
   statusIds?: string[];
+  /** FK → Payout — unlike sellerId, editable after creation (user request 2026-08-20). `undefined`/omitted
+   * clears it (full-replace semantics, same as `notes`), not "leave unchanged". */
+  payoutId?: string;
   notes?: string;
 };
 
-/** Edit Page — name/URL/status/notes only (spec §15.3). Employee changes go through `transferPage`. */
+/** Edit Page — name/URL/status/payout/notes (spec §15.3, payout added 2026-08-20). Employee changes go through `transferPage`. */
 export async function updatePage(
   pageId: string,
   input: UpdatePageInput,
@@ -482,18 +538,23 @@ export async function updatePage(
     const count = await prisma.pageStatusOption.count({ where: { id: { in: statusIds } } });
     if (count !== statusIds.length) throw new PageError("Trạng thái không hợp lệ.", "INVALID_STATUS");
   }
+  if (input.payoutId) {
+    const payout = await prisma.payout.findUnique({ where: { id: input.payoutId } });
+    if (!payout) throw new PageError("Payout không hợp lệ.", "INVALID_PAYOUT");
+  }
 
   const before = {
     name: page.name,
     facebookUrl: page.facebookUrl,
     statusIds: page.statusAssignments.map((assignment) => assignment.statusOptionId),
+    payoutId: page.payoutId,
     notes: page.notes,
   };
 
   await prisma.$transaction(async (tx) => {
     await tx.page.update({
       where: { id: pageId },
-      data: { name: input.name, facebookUrl: input.facebookUrl, notes: input.notes ?? null },
+      data: { name: input.name, facebookUrl: input.facebookUrl, payoutId: input.payoutId ?? null, notes: input.notes ?? null },
     });
     await tx.pageStatusAssignment.deleteMany({ where: { pageId } });
     if (statusIds.length > 0) {
@@ -513,6 +574,7 @@ export async function updatePage(
       name: input.name,
       facebookUrl: input.facebookUrl,
       statusIds,
+      payoutId: input.payoutId ?? null,
       notes: input.notes ?? null,
     },
     ipAddress: meta.ipAddress,
@@ -522,6 +584,9 @@ export async function updatePage(
 
 export type UpdatePageStatusInput = {
   statusIds?: string[];
+  /** FK → Payout — Employee self-service (user request 2026-08-20, "áp dụng chọn payout cho
+   * page cả ở admin và nhân viên"). Same full-replace/clear semantics as `updatePage`. */
+  payoutId?: string;
 };
 
 /**
@@ -556,10 +621,15 @@ export async function updatePageStatusByEmployee(
     const count = await prisma.pageStatusOption.count({ where: { id: { in: statusIds } } });
     if (count !== statusIds.length) throw new PageError("Trạng thái không hợp lệ.", "INVALID_STATUS");
   }
+  if (input.payoutId) {
+    const payout = await prisma.payout.findUnique({ where: { id: input.payoutId } });
+    if (!payout) throw new PageError("Payout không hợp lệ.", "INVALID_PAYOUT");
+  }
 
-  const before = { statusIds: page.statusAssignments.map((assignment) => assignment.statusOptionId) };
+  const before = { statusIds: page.statusAssignments.map((assignment) => assignment.statusOptionId), payoutId: page.payoutId };
 
   await prisma.$transaction(async (tx) => {
+    await tx.page.update({ where: { id: pageId }, data: { payoutId: input.payoutId ?? null } });
     await tx.pageStatusAssignment.deleteMany({ where: { pageId } });
     if (statusIds.length > 0) {
       await tx.pageStatusAssignment.createMany({
@@ -575,7 +645,7 @@ export async function updatePageStatusByEmployee(
     entityType: "Page",
     entityId: pageId,
     beforeJson: before,
-    afterJson: { statusIds },
+    afterJson: { statusIds, payoutId: input.payoutId ?? null },
     ipAddress: meta.ipAddress,
     userAgent: meta.userAgent,
   });
