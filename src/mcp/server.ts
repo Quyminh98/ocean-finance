@@ -1,7 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { runMcpTool, McpToolError } from "@/mcp/tool-runner";
-import { getSystemFinancials } from "@/server/services/dashboard.service";
+import {
+  getSystemFinancials,
+  getSystemMonthlySeries,
+  getAdminSpendingBreakdown,
+  getRecentActivity,
+} from "@/server/services/dashboard.service";
 import {
   listEmployees,
   getEmployeeDetail,
@@ -10,9 +15,22 @@ import {
   updateEmployee,
   deactivateEmployee,
 } from "@/server/services/employee.service";
-import { setEmployeeSalary } from "@/server/services/salary.service";
-import { listPages, getPageDetail, createPage, updatePage, softDeletePage } from "@/server/services/page.service";
-import { assignEmployee, transferPage } from "@/server/services/assignment.service";
+import { setEmployeeSalary, getSalaryHistory } from "@/server/services/salary.service";
+import {
+  listPages,
+  getPageDetail,
+  createPage,
+  updatePage,
+  softDeletePage,
+  listPagePurchaseExpensesByEmployee,
+  listPagePurchaseExpensesByAdmin,
+} from "@/server/services/page.service";
+import {
+  assignEmployee,
+  transferPage,
+  getAssignmentHistory,
+  getEmployeeAssignmentHistory,
+} from "@/server/services/assignment.service";
 import { listRevenue, createRevenue, updateRevenue, softDeleteRevenue } from "@/server/services/revenue.service";
 import { listAdExpenses, createAdExpense, updateAdExpense, softDeleteAdExpense } from "@/server/services/ads.service";
 import {
@@ -20,6 +38,7 @@ import {
   createAdminExpense,
   updateAdminExpense,
   softDeleteAdminExpense,
+  restoreAdminExpense,
 } from "@/server/services/admin-expense.service";
 import {
   listAdminReceipts,
@@ -40,6 +59,8 @@ import {
   deletePageStatusOption,
 } from "@/server/services/page-status-option.service";
 import { listSellersWithUsage, createSeller, updateSeller, deleteSeller } from "@/server/services/seller.service";
+import { listPayoutsWithUsage, createPayout, updatePayout, deletePayout } from "@/server/services/payout.service";
+import { listAllVias, createVia, updateVia, deleteVia } from "@/server/services/via.service";
 import { listAdminOptions } from "@/server/services/user-account.service";
 import { listAuditLogs } from "@/server/services/audit.service";
 import { parseMonthKey } from "@/lib/month";
@@ -488,7 +509,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     {
       title: "Tạo Page",
       description:
-        "Tạo Page mới (loại BKT — Page hệ thống chỉ tự tạo qua User). Nếu có `employeeId` sẽ gán ngay + tạo Page Purchase Expense khi `purchasePrice > 0` (bắt buộc `paidByAdminId` trong trường hợp đó, dù đã gán nhân viên hay chưa). `sellerId` (FK → Seller, tra qua `list_sellers`) tuỳ chọn — chỉ áp dụng cho Page BKT.",
+        "Tạo Page mới (loại BKT — Page hệ thống chỉ tự tạo qua User). Nếu có `employeeId` sẽ gán ngay + tạo Page Purchase Expense khi `purchasePrice > 0` (bắt buộc `paidByAdminId` trong trường hợp đó, dù đã gán nhân viên hay chưa). `sellerId` (FK → Seller, tra qua `list_sellers`) tuỳ chọn — chỉ áp dụng cho Page BKT. `payoutId` (FK → Payout, tra qua `list_payouts`) tuỳ chọn, không giới hạn loại Page.",
       inputSchema: z.object({
         name: z.string().trim().min(1),
         facebookUrl: z.url(),
@@ -496,12 +517,13 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
         purchaseMonth: requiredMonthSchema,
         paidByAdminId: z.uuid().optional(),
         sellerId: z.uuid().optional(),
+        payoutId: z.uuid().optional(),
         employeeId: z.uuid().optional(),
         notes: mcpNoteSchema,
       }),
       annotations: WRITE_ANNOTATIONS,
     },
-    async ({ name, facebookUrl, purchasePrice, purchaseMonth, paidByAdminId, sellerId, employeeId, notes }) =>
+    async ({ name, facebookUrl, purchasePrice, purchaseMonth, paidByAdminId, sellerId, payoutId, employeeId, notes }) =>
       runMcpTool({
         mcpClientId,
         action: "CREATE",
@@ -517,6 +539,7 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
               assignEmployeeId: employeeId,
               paidByAdminId,
               sellerId,
+              payoutId,
               notes,
             },
             createdByAdminId,
@@ -529,24 +552,26 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
     "update_page",
     {
       title: "Cập nhật Page",
-      description: "Sửa tên/URL/ghi chú/tag trạng thái — đổi nhân viên phụ trách dùng `transfer_page`/`assign_employee`.",
+      description:
+        "Sửa tên/URL/ghi chú/tag trạng thái/payout — đổi nhân viên phụ trách dùng `transfer_page`/`assign_employee`. `payoutId` là full-replace: bỏ trống sẽ XOÁ payout hiện tại của Page, không phải giữ nguyên — nếu muốn giữ, truyền lại đúng `payoutId` cũ (tra qua `get_page_detail`).",
       inputSchema: z.object({
         pageId: z.uuid(),
         name: z.string().trim().min(1),
         facebookUrl: z.url(),
         statusIds: z.array(z.uuid()).optional(),
+        payoutId: z.uuid().optional(),
         notes: mcpNoteSchema,
       }),
       annotations: WRITE_ANNOTATIONS,
     },
-    async ({ pageId, name, facebookUrl, statusIds, notes }) =>
+    async ({ pageId, name, facebookUrl, statusIds, payoutId, notes }) =>
       runMcpTool({
         mcpClientId,
         action: "UPDATE",
         entityType: "Page",
         entityId: pageId,
         auditOnSuccess: false,
-        run: () => updatePage(pageId, { name, facebookUrl, statusIds, notes }, createdByAdminId, auditMeta),
+        run: () => updatePage(pageId, { name, facebookUrl, statusIds, payoutId, notes }, createdByAdminId, auditMeta),
       }),
   );
 
@@ -1195,6 +1220,352 @@ export function buildMcpServer(mcpClientId: string, createdByAdminId: string): M
           requireConfirm(confirm);
           await deleteSeller(sellerId, createdByAdminId, auditMeta);
           return { sellerId, deleted: true };
+        },
+      }),
+  );
+
+  server.registerTool(
+    "restore_admin_expense",
+    {
+      title: "Khôi phục chi phí chung Admin",
+      description: "Hoàn tác soft-delete cho một Admin Expense — lỗi nếu bản ghi chưa từng bị xoá.",
+      inputSchema: z.object({ adminExpenseId: z.uuid() }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ adminExpenseId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "RESTORE",
+        entityType: "AdminExpense",
+        entityId: adminExpenseId,
+        auditOnSuccess: false,
+        run: async () => {
+          await restoreAdminExpense(adminExpenseId, createdByAdminId, auditMeta);
+          return { adminExpenseId, restored: true };
+        },
+      }),
+  );
+
+  server.registerTool(
+    "get_salary_history",
+    {
+      title: "Lịch sử lương nhân viên",
+      description:
+        "Toàn bộ các giai đoạn lương (SalaryHistory) của một nhân viên theo thời gian, mới nhất trước — `effectiveTo: null` là mức đang hiệu lực. `get_employee_detail` chỉ trả mức lương hiện tại, dùng tool này khi cần xem lịch sử đổi lương.",
+      inputSchema: z.object({ employeeId: z.uuid() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ employeeId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "SalaryHistory",
+        entityId: employeeId,
+        run: () => getSalaryHistory(employeeId),
+      }),
+  );
+
+  server.registerTool(
+    "get_page_assignment_history",
+    {
+      title: "Lịch sử phụ trách của một Page",
+      description:
+        "Toàn bộ các giai đoạn PageAssignment của một Page theo thời gian, mới nhất trước — `endedAt: null` là nhân viên đang phụ trách hiện tại. Dùng để tra ai từng quản lý Page này và trong khoảng thời gian nào.",
+      inputSchema: z.object({ pageId: z.uuid() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ pageId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "PageAssignment",
+        entityId: pageId,
+        run: () => getAssignmentHistory(pageId),
+      }),
+  );
+
+  server.registerTool(
+    "get_employee_assignment_history",
+    {
+      title: "Lịch sử Page một nhân viên từng phụ trách",
+      description:
+        "Toàn bộ Page (đang phụ trách hoặc đã từng, `endedAt` khác null) mà một nhân viên từng được gán, mới nhất trước.",
+      inputSchema: z.object({ employeeId: z.uuid() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ employeeId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "PageAssignment",
+        entityId: employeeId,
+        run: () => getEmployeeAssignmentHistory(employeeId),
+      }),
+  );
+
+  server.registerTool(
+    "list_page_purchase_expenses_by_employee",
+    {
+      title: "Chi phí mua Page của một nhân viên",
+      description:
+        "Danh sách Page Purchase Expense snapshot theo nhân viên hiện đang giữ Page đó (employee_id_snapshot) — mỗi Page tối đa 1 dòng, không phân trang.",
+      inputSchema: z.object({ employeeId: z.uuid() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ employeeId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "PagePurchaseExpense",
+        entityId: employeeId,
+        run: () => listPagePurchaseExpensesByEmployee(employeeId),
+      }),
+  );
+
+  server.registerTool(
+    "list_page_purchase_expenses_by_admin",
+    {
+      title: "Chi phí mua Page do một Admin đã chi",
+      description: "Danh sách Page Purchase Expense theo Admin đã trả tiền (paid_by_admin_id), không phân trang.",
+      inputSchema: z.object({ adminId: z.uuid() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ adminId }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "PagePurchaseExpense",
+        entityId: adminId,
+        run: () => listPagePurchaseExpensesByAdmin(adminId),
+      }),
+  );
+
+  server.registerTool(
+    "get_dashboard_monthly_series",
+    {
+      title: "Biểu đồ doanh thu/chi phí theo tháng",
+      description: "Doanh thu, tiền Admin thực nhận, tổng chi phí, lợi nhuận toàn hệ thống theo từng tháng — mặc định 6 tháng gần nhất tính đến tháng hiện tại.",
+      inputSchema: z.object({ monthsBack: z.number().int().min(1).max(24).optional() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ monthsBack }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "Dashboard",
+        run: () => getSystemMonthlySeries(monthsBack),
+      }),
+  );
+
+  server.registerTool(
+    "get_admin_spending_breakdown",
+    {
+      title: "Chi tiêu theo từng Admin",
+      description:
+        "Ads/Mua Page/Chi phí chung/Lương mà mỗi Admin đã chi, tiền đã nhận, và lợi nhuận ròng — bỏ trống `month` = toàn thời gian.",
+      inputSchema: z.object({ month: monthSchema }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ month }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "Dashboard",
+        run: () => getAdminSpendingBreakdown(month),
+      }),
+  );
+
+  const recentActivityPageSizeSchema = z.union([z.literal(5), z.literal(10), z.literal(20)]).optional();
+
+  server.registerTool(
+    "get_recent_activity",
+    {
+      title: "Hoạt động gần đây",
+      description:
+        "Feed hợp nhất các sự kiện gần đây (Revenue, Ads, Page mới, Page transfer, Admin Expense, Admin Receipt), mới nhất trước, có phân trang.",
+      inputSchema: z.object({ page: z.number().int().min(1).optional(), pageSize: recentActivityPageSizeSchema }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async (input) =>
+      runMcpTool({
+        mcpClientId,
+        action: "READ",
+        entityType: "Dashboard",
+        run: () => getRecentActivity(input),
+      }),
+  );
+
+  const payoutNameSchema = z.string().trim().min(1).max(100, { error: "Tên tối đa 100 ký tự." });
+  const bankNameSchema = z.string().trim().min(1).max(100, { error: "Tên bank tối đa 100 ký tự." });
+  const payoutStatusSchema = z.enum(["ACTIVE", "ISSUE"], { error: "Trạng thái không hợp lệ." });
+
+  server.registerTool(
+    "list_payouts",
+    {
+      title: "Danh sách Payout",
+      description: "Liệt kê Payout (tài khoản nhận tiền, Cài đặt → Payout) kèm số Page đang dùng mỗi payout.",
+      inputSchema: z.object({}),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async () => runMcpTool({ mcpClientId, action: "READ", entityType: "Payout", run: () => listPayoutsWithUsage() }),
+  );
+
+  server.registerTool(
+    "create_payout",
+    {
+      title: "Tạo Payout",
+      description: "Tạo một Payout mới — dùng để chọn khi tạo/sửa Page (`payoutId`).",
+      inputSchema: z.object({
+        name: payoutNameSchema,
+        bankName: bankNameSchema,
+        status: payoutStatusSchema,
+        note: mcpNoteSchema,
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ name, bankName, status, note }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "CREATE",
+        entityType: "Payout",
+        auditOnSuccess: false,
+        run: () => createPayout({ name, bankName, status, note }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "update_payout",
+    {
+      title: "Sửa Payout",
+      description: "Đổi tên/bank/trạng thái/ghi chú của một Payout đã có.",
+      inputSchema: z.object({
+        payoutId: z.uuid(),
+        name: payoutNameSchema,
+        bankName: bankNameSchema,
+        status: payoutStatusSchema,
+        note: mcpNoteSchema,
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ payoutId, name, bankName, status, note }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "UPDATE",
+        entityType: "Payout",
+        entityId: payoutId,
+        auditOnSuccess: false,
+        run: () => updatePayout(payoutId, { name, bankName, status, note }, createdByAdminId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "delete_payout",
+    {
+      title: "Xoá Payout",
+      description:
+        "Hard delete — metadata hiển thị thuần tuý, không phải dữ liệu tài chính. Page đang gắn Payout này tự rơi về payoutId = null (ON DELETE SET NULL), không mất Page. Destructive action, yêu cầu confirm:true (spec §33).",
+      inputSchema: z.object({ payoutId: z.uuid(), confirm: confirmSchema }),
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async ({ payoutId, confirm }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "DELETE",
+        entityType: "Payout",
+        entityId: payoutId,
+        auditOnSuccess: false,
+        run: async () => {
+          requireConfirm(confirm);
+          await deletePayout(payoutId, createdByAdminId, auditMeta);
+          return { payoutId, deleted: true };
+        },
+      }),
+  );
+
+  const viaNameSchema = z.string().trim().min(1).max(200);
+
+  server.registerTool(
+    "list_vias",
+    {
+      title: "Danh sách Via",
+      description:
+        "Liệt kê Via (tài khoản quảng cáo) của mọi người — lọc theo `holderUserId` (tra qua `list_employees`/`list_admins`, field `userId`) hoặc tên (`search`). Không phân trang.",
+      inputSchema: z.object({ holderUserId: z.uuid().optional(), search: z.string().optional() }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async (input) => runMcpTool({ mcpClientId, action: "READ", entityType: "Via", run: () => listAllVias(input) }),
+  );
+
+  server.registerTool(
+    "create_via",
+    {
+      title: "Tạo Via",
+      description:
+        "Tạo Via mới cho `holderUserId` bất kỳ (Admin hoặc nhân viên — tra UUID qua `list_employees`/`list_admins`, field `userId`). MCP dùng quyền Admin Full nên không giới hạn tự tạo cho chính mình như Web (khác Web: chỉ tự tạo Via của bản thân).",
+      inputSchema: z.object({
+        holderUserId: z.uuid(),
+        name: viaNameSchema,
+        facebookUrl: z.url(),
+        pageIds: z.array(z.uuid()).optional(),
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ holderUserId, name, facebookUrl, pageIds }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "CREATE",
+        entityType: "Via",
+        auditOnSuccess: false,
+        run: () => createVia({ name, facebookUrl, pageIds }, holderUserId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "update_via",
+    {
+      title: "Sửa Via",
+      description:
+        "Sửa tên/URL/danh sách Page gắn với một Via. `holderUserId` phải khớp đúng chủ sở hữu hiện tại của Via (tra qua `list_vias`) — nếu không khớp sẽ bị từ chối (FORBIDDEN), MCP không tự ý đổi chủ Via.",
+      inputSchema: z.object({
+        viaId: z.uuid(),
+        holderUserId: z.uuid(),
+        name: viaNameSchema,
+        facebookUrl: z.url(),
+        pageIds: z.array(z.uuid()).optional(),
+      }),
+      annotations: WRITE_ANNOTATIONS,
+    },
+    async ({ viaId, holderUserId, name, facebookUrl, pageIds }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "UPDATE",
+        entityType: "Via",
+        entityId: viaId,
+        auditOnSuccess: false,
+        run: () => updateVia(viaId, { name, facebookUrl, pageIds }, holderUserId, auditMeta),
+      }),
+  );
+
+  server.registerTool(
+    "delete_via",
+    {
+      title: "Xoá Via",
+      description:
+        "Hard delete — metadata tài khoản, không phải dữ liệu tài chính. `holderUserId` phải khớp đúng chủ sở hữu hiện tại (tra qua `list_vias`). Destructive action, yêu cầu confirm:true (spec §33).",
+      inputSchema: z.object({ viaId: z.uuid(), holderUserId: z.uuid(), confirm: confirmSchema }),
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async ({ viaId, holderUserId, confirm }) =>
+      runMcpTool({
+        mcpClientId,
+        action: "DELETE",
+        entityType: "Via",
+        entityId: viaId,
+        auditOnSuccess: false,
+        run: async () => {
+          requireConfirm(confirm);
+          await deleteVia(viaId, holderUserId, auditMeta);
+          return { viaId, deleted: true };
         },
       }),
   );
